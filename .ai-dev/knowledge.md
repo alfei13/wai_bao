@@ -31,3 +31,22 @@
 - **重试限制很重要**：每个步骤（search/input）必须有最大重试次数（5-8次），超过后 skipKeyword 跳过，
   避免无限循环卡死整个采集流程。
 
+## 调试经验（菜亿萝采集适配）
+- **菜亿萝是 WebView 应用**：io.dcloud.PandoraEntryActivity + android.webkit.WebView，搜索框是原生 EditText，
+  但搜索按钮"搜索"是 WebView 内的 TextView，`findAccessibilityNodeInfosByText("搜索")` 在 WebView 中不可靠，
+  需用 `findClickableNodeByTextTraversal` 手动遍历整个无障碍树查找。
+- **搜索按钮坐标记录+dispatchGesture 点击兜底**：WebView 中 ACTION_SET_TEXT 后搜索按钮可能消失，
+  需在输入前用 `preRoot` 记录搜索按钮的 `getBoundsInScreen` 到 `searchBtnBounds`，
+  若输入后找不到按钮则用 `dispatchGesture` 在记录坐标处模拟点击。
+- **菜亿萝搜索结果页价格结构**：uiautomator dump 看到 `text='￥1.58'`（￥+数字合并在一个 TextView），
+  但无障碍服务看到的是分离的 `text='￥'` + `text='1.58'` 两个同级节点。
+  采集走通用方式3（findAllPriceNodes 找含 ￥ 的节点），价格提取正常。
+- **菜亿萝商品名提取陷阱**：搜索结果页每个商品卡片结构为：
+  图片节点(含子节点"历史价格"标签) → 商品名TextView → ￥价格TextView → /单位TextView → "选规格"按钮。
+  `findProductName` 先检查兄弟节点的子节点，"历史价格"作为图片节点的子节点比真实商品名更先被遍历到。
+  加上 `usedNames` 去重，导致4个商品只采集到1个且名字全是"历史价格"。
+  **修复**：在 `isLikelyProductName` 排除列表加入"历史价格""补货中""选规格"等 UI 标签，
+  并过滤以"/"开头的单位文本（如"/120g/包"）。
+- **菜亿萝首页 vs 搜索结果页结构不同**：首页价格是分离的 `￥` + `0.28` 节点（走方式2 findAllYenNodes）；
+  搜索结果页价格是合并的 `￥1.58` 节点（走方式3 findAllPriceNodes）。两种结构都需要支持。
+

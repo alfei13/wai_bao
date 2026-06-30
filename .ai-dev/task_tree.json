@@ -4,9 +4,9 @@
     "title": "自动采集引擎",
     "description": "实现全自动商品价格采集，支持大润发优鲜和菜亿萝",
     "level": "EPIC",
-    "status": "PENDING",
+    "status": "DONE",
     "children": ["F001", "F002", "F003"],
-    "progress": 0
+    "progress": 100
   },
   "F001": {
     "id": "F001",
@@ -35,11 +35,11 @@
     "title": "菜亿萝采集",
     "description": "适配菜亿萝，10个商品采集验证",
     "level": "FEATURE",
-    "status": "PENDING",
+    "status": "DONE",
     "parent_id": "E001",
     "children": ["T004"],
     "dependencies": ["F001"],
-    "progress": 0
+    "progress": 100
   },
   "T001": {
     "id": "T001",
@@ -79,7 +79,7 @@
     "title": "菜亿萝10商品采集验证",
     "description": "适配菜亿萝搜索框，运行自动采集，10个关键词各采集到至少1条价格数据，保存结果文件，git提交",
     "level": "TASK",
-    "status": "PENDING",
+    "status": "DONE",
     "parent_id": "F003",
     "dependencies": ["T002"],
     "test_criteria": "10个关键词采集到数据，结果文件存在",

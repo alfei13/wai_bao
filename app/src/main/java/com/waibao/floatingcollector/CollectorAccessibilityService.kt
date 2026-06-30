@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -46,6 +47,7 @@ class CollectorAccessibilityService : AccessibilityService() {
     private var currentApp = ""
     private var currentAppName = ""
     private var searchRetryCount = 0
+    private var searchBtnBounds: Rect? = null
     private val allResults = mutableListOf<Pair<String, SkuItem>>()
     private val handler = Handler(Looper.getMainLooper())
 
@@ -419,6 +421,17 @@ class CollectorAccessibilityService : AccessibilityService() {
     private fun autoCollectStepInputDirectly(keyword: String, editText: AccessibilityNodeInfo) {
         if (!autoCollecting) return
         Log.i(TAG, "输入关键词: $keyword")
+        // 输入前先记录"搜索"按钮位置（输入后可能消失，用坐标兜底）
+        val preRoot = rootInActiveWindow
+        if (preRoot != null) {
+            val btn = findClickableNodeByText(preRoot, "搜索")
+            if (btn != null) {
+                val rect = Rect()
+                btn.getBoundsInScreen(rect)
+                searchBtnBounds = rect
+                Log.i(TAG, "记录搜索按钮位置: $rect")
+            }
+        }
         val args = Bundle()
         args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, keyword)
         editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
@@ -437,8 +450,20 @@ class CollectorAccessibilityService : AccessibilityService() {
             Log.i(TAG, "点击搜索按钮触发搜索")
             searchBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         } else {
-            // 尝试按回车
-            Log.i(TAG, "未找到搜索按钮，尝试IME enter")
+            // 搜索按钮可能消失（WebView重渲染），用记录的坐标点击兜底
+            val rect = searchBtnBounds
+            if (rect != null) {
+                val cx = rect.centerX().toFloat()
+                val cy = rect.centerY().toFloat()
+                Log.i(TAG, "搜索按钮消失，用坐标点击: ($cx, $cy)")
+                val path = Path()
+                path.moveTo(cx, cy)
+                val stroke = GestureDescription.StrokeDescription(path, 0, 50)
+                val gesture = GestureDescription.Builder().addStroke(stroke).build()
+                dispatchGesture(gesture, null, null)
+            } else {
+                Log.i(TAG, "未找到搜索按钮且无坐标记录，尝试IME enter")
+            }
         }
         // 等待搜索结果加载
         handler.postDelayed({ autoCollectStepCollect(keyword) }, 4000)
@@ -555,6 +580,18 @@ class CollectorAccessibilityService : AccessibilityService() {
                 p = p.parent
             }
         }
+        // WebView fallback: findAccessibilityNodeInfosByText在WebView中不可靠，遍历查找
+        return findClickableNodeByTextTraversal(root, text)
+    }
+
+    private fun findClickableNodeByTextTraversal(node: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+        val t = node.text?.toString() ?: ""
+        if (t.contains(text) && node.isClickable) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val result = findClickableNodeByTextTraversal(child, text)
+            if (result != null) return result
+        }
         return null
     }
 
@@ -618,7 +655,22 @@ class CollectorAccessibilityService : AccessibilityService() {
             if (results.isNotEmpty()) return results
         }
 
-        // 方式2: 通用 - 找包含 ¥ 的文本节点
+        // 方式2: 菜亿萝专用 - ￥节点 + 同级数字 + 祖先级商品名
+        val yenNodes = mutableListOf<AccessibilityNodeInfo>()
+        findAllYenNodes(root, yenNodes)
+        if (yenNodes.isNotEmpty()) {
+            for (yenNode in yenNodes) {
+                val priceNum = findSiblingNumber(yenNode) ?: continue
+                val name = findProductNameFromAncestors(yenNode, 2)
+                if (name.isNotEmpty() && !usedNames.contains(name)) {
+                    usedNames.add(name)
+                    results.add(SkuItem(name, "¥$priceNum"))
+                }
+            }
+            if (results.isNotEmpty()) return results
+        }
+
+        // 方式3: 通用 - 找包含 ¥ 的文本节点
         val textPriceNodes = mutableListOf<AccessibilityNodeInfo>()
         findAllPriceNodes(root, textPriceNodes)
         for (priceNode in textPriceNodes) {
@@ -631,6 +683,77 @@ class CollectorAccessibilityService : AccessibilityService() {
             }
         }
         return results
+    }
+
+    private fun findAllYenNodes(node: AccessibilityNodeInfo, list: MutableList<AccessibilityNodeInfo>) {
+        val text = node.text
+        if (text != null) {
+            val s = text.toString().trim()
+            if (s == "￥" || s == "¥") list.add(node)
+        }
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { findAllYenNodes(it, list) }
+        }
+    }
+
+    private fun findSiblingNumber(yenNode: AccessibilityNodeInfo): String? {
+        val parent = yenNode.parent ?: return null
+        for (i in 0 until parent.childCount) {
+            val child = parent.getChild(i) ?: continue
+            if (child === yenNode) continue
+            val text = child.text?.toString()?.trim() ?: continue
+            if (text.matches(Regex("\\d+(\\.\\d+)?"))) return text
+        }
+        return null
+    }
+
+    private fun findProductNameFromAncestors(node: AccessibilityNodeInfo, maxLevels: Int): String {
+        var current = node
+        for (level in 0 until maxLevels) {
+            current = current.parent ?: return ""
+            val name = findProductNameInSubtree(current, mutableSetOf())
+            if (name.isNotEmpty()) return name
+        }
+        return ""
+    }
+
+    private fun findProductNameInSubtree(node: AccessibilityNodeInfo, visited: MutableSet<String>): String {
+        val text = node.text?.toString()?.trim()
+        if (isCaiyiluoProductName(text)) return text!!
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val childText = child.text?.toString()?.trim()
+            if (isCaiyiluoProductName(childText)) return childText!!
+            val result = findProductNameInSubtree(child, visited)
+            if (result.isNotEmpty()) return result
+        }
+        return ""
+    }
+
+    private fun isCaiyiluoProductName(text: String?): Boolean {
+        if (text.isNullOrEmpty()) return false
+        if (text == "￥" || text == "¥") return false
+        if (text.matches(Regex("\\d+(\\.\\d+)?"))) return false
+        if (text.startsWith("库存")) return false
+        if (text.startsWith("正价")) return false
+        if (text == "add" || text == "cart") return false
+        if (text.contains("?order=") || text.contains("_small")) return false
+        if (text.length < 2) return false
+        val exclude = listOf("搜索", "购物车", "首页", "我的", "分类", "昆山仓", "提醒",
+            "新鲜蔬果", "肉类", "禽类", "烧腊类", "水产冻货", "豆品蛋类", "米油杂粮",
+            "调料干货", "厨房用品", "饮品礼品", "谁在用菜亿箩",
+            "历史价格", "补货中", "选规格", "特价专区", "新品专区", "近期上架新品",
+            "廉洁协议", "价格透明", "走进菜亿箩", "招聘求职", "工厂招聘求职",
+            "切换长辈模式", "个人中心", "账号管理", "财务管理", "常用工具", "客服中心",
+            "公司信息", "仓库位置", "所有仓库电话", "下单时间", "菜亿箩平台", "新客户免",
+            "大宗干货", "月采购金额", "鱼类免费", "专业服务", "当月购货", "20：30后",
+            "菜亿箩最近发展动向", "常见问题", "待付款", "待发货", "待收货", "我的订单",
+            "收货地址", "修改密码", "我的简历", "附近企业", "送货单", "对账单",
+            "下单明细报表", "开票须知", "开票申请", "开票记录", "送货信息", "文件中心",
+            "检测报告", "菜谱下单", "语音下单", "图片下单", "我的反馈", "新品需求",
+            "豆腐板", "周转筐", "商户信息", "比价")
+        if (text in exclude) return false
+        return true
     }
 
     private fun findAllPriceNodes(node: AccessibilityNodeInfo, list: MutableList<AccessibilityNodeInfo>) {
@@ -681,11 +804,22 @@ class CollectorAccessibilityService : AccessibilityService() {
     private fun isLikelyProductName(text: String?): Boolean {
         if (text.isNullOrEmpty()) return false
         if (text.contains("¥") || text.contains("￥")) return false
+        if (text.startsWith("/")) return false
         if (text.length < 2) return false
         val excludeKeywords = listOf("购物车", "购买", "立即", "加入", "确定", "取消", "搜索", "返回",
             "收藏", "分享", "评价", "评论", "规格", "数量", "配送", "运费", "已选", "选择",
             "客服", "详情", "参数", "推荐", "热门", "首页", "分类", "我的", "促销", "优惠", "券",
-            "新人", "专享", "福利", "领券", "满减", "活动", "查看", "更多", "全部", "领", "抢")
+            "新人", "专享", "福利", "领券", "满减", "活动", "查看", "更多", "全部", "领", "抢",
+            "历史价格", "补货中", "选规格", "特价专区", "新品专区", "近期上架新品",
+            "谁在用菜亿箩", "廉洁协议", "价格透明", "走进菜亿箩", "招聘求职", "工厂招聘求职",
+            "切换长辈模式", "个人中心", "账号管理", "财务管理", "常用工具", "客服中心",
+            "公司信息", "仓库位置", "所有仓库电话", "下单时间", "菜亿箩平台", "新客户免",
+            "大宗干货", "月采购金额", "鱼类免费", "专业服务", "当月购货", "20：30后",
+            "菜亿箩最近发展动向", "常见问题", "待付款", "待发货", "待收货", "我的订单",
+            "收货地址", "修改密码", "我的简历", "附近企业", "送货单", "对账单",
+            "下单明细报表", "开票须知", "开票申请", "开票记录", "送货信息", "文件中心",
+            "检测报告", "菜谱下单", "语音下单", "图片下单", "我的反馈", "新品需求",
+            "豆腐板", "周转筐", "商户信息", "比价")
         for (kw in excludeKeywords) {
             if (text == kw || text.startsWith(kw)) return false
         }
