@@ -17,7 +17,7 @@
     "parent_id": "E001",
     "children": ["T001", "T002"],
     "dependencies": [],
-    "progress": 0
+    "progress": 100
   },
   "F002": {
     "id": "F002",
@@ -46,7 +46,7 @@
     "title": "Git初始化+远程仓库",
     "description": "git init, 添加.gitignore, 连接远程仓库 https://github.com/alfei13/wai_bao.git, 首次提交",
     "level": "TASK",
-    "status": "PENDING",
+    "status": "DONE",
     "parent_id": "F001",
     "dependencies": [],
     "test_criteria": "git push 成功",
@@ -57,7 +57,7 @@
     "title": "自动采集引擎实现",
     "description": "在CollectorAccessibilityService中实现AutoCollectEngine：启动目标App→找搜索框→输入关键词→点搜索→等结果→采集价格→滚动→返回→下一个关键词→保存结果。通过广播触发。10个预设关键词。",
     "level": "TASK",
-    "status": "PENDING",
+    "status": "DONE",
     "parent_id": "F001",
     "dependencies": ["T001"],
     "test_criteria": "编译成功，广播触发后logcat显示自动搜索采集流程",
