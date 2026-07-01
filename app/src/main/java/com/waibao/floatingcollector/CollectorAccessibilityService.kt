@@ -6,9 +6,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -21,6 +24,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -38,7 +42,6 @@ class CollectorAccessibilityService : AccessibilityService() {
     private var floatingView: View? = null
     private var resultText: TextView? = null
     private var titleText: TextView? = null
-    private var contentLayout: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
     // ===== 自动采集引擎状态 =====
@@ -89,7 +92,15 @@ class CollectorAccessibilityService : AccessibilityService() {
         Log.i(TAG, "广播接收器已注册")
     }
 
-    // ===== 悬浮窗 =====
+    // ===== 悬浮窗（悬浮球 + 展开面板）=====
+
+    private var ballView: View? = null
+    private var panelView: View? = null
+    private var isMinimized = false
+    private var dragInitialX = 0
+    private var dragInitialY = 0
+    private var dragStartRawX = 0f
+    private var dragStartRawY = 0f
 
     private fun showFloatingWindow() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -110,44 +121,117 @@ class CollectorAccessibilityService : AccessibilityService() {
 
     private fun buildFloatingView(): View {
         val ctx = this
+        val root = FrameLayout(ctx)
+        ballView = buildBallView(ctx)
+        panelView = buildPanelView(ctx)
+        ballView?.visibility = View.GONE
+        panelView?.visibility = View.VISIBLE
+        root.addView(ballView)
+        root.addView(panelView)
+        return root
+    }
+
+    private fun buildBallView(ctx: Context): View {
         val density = resources.displayMetrics.density
-        val root = LinearLayout(ctx).apply {
+        val ball = TextView(ctx).apply {
+            text = "采"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            val gd = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFF6B6AE0.toInt(), 0xFF8B7FE6.toInt())
+            )
+            gd.shape = GradientDrawable.OVAL
+            background = gd
+        }
+        ball.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragInitialX = layoutParams?.x ?: 0
+                    dragInitialY = layoutParams?.y ?: 0
+                    dragStartRawX = event.rawX
+                    dragStartRawY = event.rawY
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    layoutParams?.let { lp ->
+                        lp.x = dragInitialX + (event.rawX - dragStartRawX).toInt()
+                        lp.y = dragInitialY + (event.rawY - dragStartRawY).toInt()
+                        windowManager?.updateViewLayout(floatingView, lp)
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    val moved = kotlin.math.abs(event.rawX - dragStartRawX) + kotlin.math.abs(event.rawY - dragStartRawY)
+                    if (moved < (density * 8)) expandPanel()
+                }
+            }
+            true
+        }
+        return ball
+    }
+
+    private fun buildPanelView(ctx: Context): View {
+        val density = resources.displayMetrics.density
+        val panelWidth = (density * 280).toInt()
+        val cornerRadius = density * 16
+        val dp8 = (density * 8).toInt()
+        val dp12 = (density * 12).toInt()
+
+        val panel = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundResource(android.R.drawable.dialog_holo_light_frame)
-            setPadding(20, 12, 20, 16)
+            val gd = GradientDrawable()
+            gd.shape = GradientDrawable.RECTANGLE
+            gd.cornerRadius = cornerRadius
+            gd.setColor(0xFFFFFFFF.toInt())
+            background = gd
+            setPadding(0, 0, 0, dp8)
         }
 
+        // 标题栏
         val titleBar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(4, 4, 4, 4)
+            setPadding(dp12, dp12, dp8, dp12)
+            val gd = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(0xFF5B6AE0.toInt(), 0xFF8B7FE6.toInt())
+            )
+            gd.shape = GradientDrawable.RECTANGLE
+            gd.cornerRadii = floatArrayOf(cornerRadius, cornerRadius, cornerRadius, cornerRadius, 0f, 0f, 0f, 0f)
+            background = gd
         }
+
         titleText = TextView(ctx).apply {
             text = "价格采集器"
-            textSize = 14f
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
             maxLines = 1
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val title = titleText!!
-        val btnHide = Button(ctx).apply {
-            text = "—"
+        val btnMin = TextView(ctx).apply {
+            text = "收起"
             textSize = 12f
-            setOnClickListener { toggleMinimize() }
+            setTextColor(0xCCFFFFFF.toInt())
+            setPadding(dp8, dp8, dp8, dp8)
+            setOnClickListener { collapsePanel() }
         }
-        val btnClose = Button(ctx).apply {
-            text = "×"
-            textSize = 12f
-            setOnClickListener { removeFloatingWindow() }
-        }
-        titleBar.addView(title)
-        titleBar.addView(btnHide)
-        titleBar.addView(btnClose)
+        titleBar.addView(titleText)
+        titleBar.addView(btnMin)
 
+        // 标题栏拖动
         titleBar.setOnTouchListener { v, event ->
             when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragInitialX = layoutParams?.x ?: 0
+                    dragInitialY = layoutParams?.y ?: 0
+                    dragStartRawX = event.rawX
+                    dragStartRawY = event.rawY
+                }
                 MotionEvent.ACTION_MOVE -> {
                     layoutParams?.let { lp ->
-                        lp.x = event.rawX.toInt() - v.width / 2
-                        lp.y = event.rawY.toInt() - v.height / 2
+                        lp.x = dragInitialX + (event.rawX - dragStartRawX).toInt()
+                        lp.y = dragInitialY + (event.rawY - dragStartRawY).toInt()
                         windowManager?.updateViewLayout(floatingView, lp)
                     }
                 }
@@ -155,87 +239,82 @@ class CollectorAccessibilityService : AccessibilityService() {
             true
         }
 
-        // 3个App自动采集按钮（横向排列）
-        val appButtonRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 4, 0, 4)
-        }
-        val btnShixing = Button(ctx).apply {
-            text = "食行生鲜"
-            textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { startAutoCollect("shixing") }
-        }
-        val btnDarunfa = Button(ctx).apply {
-            text = "大润发"
-            textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { startAutoCollect("darunfa") }
-        }
-        val btnCaiyiluo = Button(ctx).apply {
-            text = "菜亿萝"
-            textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { startAutoCollect("caiyiluo") }
-        }
-        appButtonRow.addView(btnShixing)
-        appButtonRow.addView(btnDarunfa)
-        appButtonRow.addView(btnCaiyiluo)
+        panel.addView(titleBar)
 
-        val btnCollect = Button(ctx).apply {
+        // 内容区
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp12, dp12, dp12, 0)
+        }
+
+        // 采集当前页面按钮
+        val btnCollect = TextView(ctx).apply {
             text = "采集当前页面"
-            textSize = 12f
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(0, (density * 10).toInt(), 0, (density * 10).toInt())
+            val gd = GradientDrawable()
+            gd.shape = GradientDrawable.RECTANGLE
+            gd.cornerRadius = density * 10
+            gd.setColor(0xFF5B6AE0.toInt())
+            background = gd
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.topMargin = (density * 8).toInt()
+            layoutParams = lp
             setOnClickListener { performCollect() }
         }
+        content.addView(btnCollect)
 
-        val scrollView = ScrollView(ctx)
+        // 结果滚动区
         resultText = TextView(ctx).apply {
-            text = "点击App按钮自动采集10个商品\n或点「采集当前页面」手动采集"
+            text = "点「采集当前页面」手动采集\n或在采集器主页选择App一键采集"
             textSize = 12f
-            setPadding(4, 8, 4, 8)
+            setTextColor(0xFF333333.toInt())
+            setPadding(dp8, dp8, dp8, dp8)
             setTextIsSelectable(true)
         }
+        val scrollView = ScrollView(ctx)
         scrollView.addView(resultText)
-        scrollView.layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, (density * 100).toInt()
-        )
+        val svBg = GradientDrawable()
+        svBg.shape = GradientDrawable.RECTANGLE
+        svBg.cornerRadius = density * 8
+        svBg.setColor(0xFFF5F5F5.toInt())
+        scrollView.background = svBg
+        val svLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (density * 180).toInt())
+        svLp.topMargin = (density * 8).toInt()
+        scrollView.layoutParams = svLp
+        content.addView(scrollView)
 
-        contentLayout = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        (contentLayout as LinearLayout).addView(appButtonRow)
-        (contentLayout as LinearLayout).addView(btnCollect)
-        (contentLayout as LinearLayout).addView(scrollView)
-
-        root.addView(titleBar)
-        root.addView(contentLayout)
-        root.layoutParams = LinearLayout.LayoutParams(
-            (density * 260).toInt(),
-            LinearLayout.LayoutParams.WRAP_CONTENT
-        )
-        return root
+        panel.addView(content)
+        panel.layoutParams = FrameLayout.LayoutParams(panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT)
+        return panel
     }
 
-    private var isMinimized = false
-
-    private fun toggleMinimize() {
-        if (isMinimized) {
-            contentLayout?.visibility = View.VISIBLE
-            layoutParams?.let { lp ->
-                lp.width = (resources.displayMetrics.density * 260).toInt()
-                lp.height = WindowManager.LayoutParams.WRAP_CONTENT
-                windowManager?.updateViewLayout(floatingView, lp)
-            }
-            isMinimized = false
-        } else {
-            contentLayout?.visibility = View.GONE
-            layoutParams?.let { lp ->
-                lp.width = WindowManager.LayoutParams.WRAP_CONTENT
-                lp.height = WindowManager.LayoutParams.WRAP_CONTENT
-                windowManager?.updateViewLayout(floatingView, lp)
-            }
-            isMinimized = true
+    private fun expandPanel() {
+        if (!isMinimized) return
+        ballView?.visibility = View.GONE
+        panelView?.visibility = View.VISIBLE
+        layoutParams?.let { lp ->
+            lp.width = WindowManager.LayoutParams.WRAP_CONTENT
+            lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+            windowManager?.updateViewLayout(floatingView, lp)
         }
+        isMinimized = false
+    }
+
+    private fun collapsePanel() {
+        if (isMinimized) return
+        panelView?.visibility = View.GONE
+        ballView?.visibility = View.VISIBLE
+        layoutParams?.let { lp ->
+            val density = resources.displayMetrics.density
+            lp.width = (density * 52).toInt()
+            lp.height = (density * 52).toInt()
+            windowManager?.updateViewLayout(floatingView, lp)
+        }
+        isMinimized = true
     }
 
     private fun removeFloatingWindow() {
@@ -308,8 +387,8 @@ class CollectorAccessibilityService : AccessibilityService() {
         Log.i(TAG, "=== 开始自动采集: $currentAppName ($packageName) ===")
         Log.i(TAG, "关键词列表: $keywords")
         updateResult("开始自动采集: $currentAppName\n正在启动目标App...")
-        // 自动采集时自动最小化悬浮窗，避免遮挡目标App
-        if (!isMinimized) toggleMinimize()
+        // 自动采集时自动收起悬浮窗，避免遮挡目标App
+        if (!isMinimized) collapsePanel()
         handler.post { titleText?.text = "$currentAppName 0/${keywords.size}" }
 
         // 由App自己启动目标App（用户要求无需手动操作）
@@ -855,8 +934,8 @@ class CollectorAccessibilityService : AccessibilityService() {
         }
         // 保存到文件
         saveResultsToFile()
-        // 自动恢复悬浮窗显示结果
-        if (isMinimized) toggleMinimize()
+        // 自动展开悬浮窗显示结果
+        if (isMinimized) expandPanel()
         handler.post { titleText?.text = "价格采集器" }
         // 更新悬浮窗
         val sb = StringBuilder()
