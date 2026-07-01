@@ -133,18 +133,23 @@ class CollectorAccessibilityService : AccessibilityService() {
 
     private fun buildBallView(ctx: Context): View {
         val density = resources.displayMetrics.density
+        val ballSize = (density * 56).toInt()
         val ball = TextView(ctx).apply {
             text = "采"
-            textSize = 20f
+            textSize = 22f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             val gd = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
-                intArrayOf(0xFF6B6AE0.toInt(), 0xFF8B7FE6.toInt())
+                intArrayOf(0xFF6C5CE7.toInt(), 0xFF8E7CF0.toInt())
             )
             gd.shape = GradientDrawable.OVAL
+            gd.setStroke((density * 2.5f).toInt(), 0x66FFFFFF.toInt())
             background = gd
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            ball.elevation = density * 6
         }
         ball.setOnTouchListener { v, event ->
             when (event.action) {
@@ -153,6 +158,7 @@ class CollectorAccessibilityService : AccessibilityService() {
                     dragInitialY = layoutParams?.y ?: 0
                     dragStartRawX = event.rawX
                     dragStartRawY = event.rawY
+                    ball.alpha = 0.85f
                 }
                 MotionEvent.ACTION_MOVE -> {
                     layoutParams?.let { lp ->
@@ -162,8 +168,9 @@ class CollectorAccessibilityService : AccessibilityService() {
                     }
                 }
                 MotionEvent.ACTION_UP -> {
+                    ball.alpha = 1.0f
                     val moved = kotlin.math.abs(event.rawX - dragStartRawX) + kotlin.math.abs(event.rawY - dragStartRawY)
-                    if (moved < (density * 8)) expandPanel()
+                    if (moved < (density * 10)) expandPanel()
                 }
             }
             true
@@ -173,10 +180,11 @@ class CollectorAccessibilityService : AccessibilityService() {
 
     private fun buildPanelView(ctx: Context): View {
         val density = resources.displayMetrics.density
-        val panelWidth = (density * 280).toInt()
-        val cornerRadius = density * 16
-        val dp8 = (density * 8).toInt()
-        val dp12 = (density * 12).toInt()
+        val panelWidth = (density * 290).toInt()
+        val cornerRadius = density * 18
+        val dp6 = (density * 6).toInt()
+        val dp10 = (density * 10).toInt()
+        val dp14 = (density * 14).toInt()
 
         val panel = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -185,41 +193,58 @@ class CollectorAccessibilityService : AccessibilityService() {
             gd.cornerRadius = cornerRadius
             gd.setColor(0xFFFFFFFF.toInt())
             background = gd
-            setPadding(0, 0, 0, dp8)
+            setPadding(0, 0, 0, dp14)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            panel.elevation = density * 10
         }
 
         // 标题栏
         val titleBar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp12, dp12, dp8, dp12)
+            setPadding(dp14, dp14, dp10, dp14)
+            gravity = Gravity.CENTER_VERTICAL
             val gd = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(0xFF5B6AE0.toInt(), 0xFF8B7FE6.toInt())
+                intArrayOf(0xFF5B4FE8.toInt(), 0xFF7B6FF0.toInt())
             )
             gd.shape = GradientDrawable.RECTANGLE
             gd.cornerRadii = floatArrayOf(cornerRadius, cornerRadius, cornerRadius, cornerRadius, 0f, 0f, 0f, 0f)
             background = gd
         }
 
+        // 标题前的小圆点
+        val dot = View(ctx).apply {
+            val dotSize = (density * 7).toInt()
+            val dotGd = GradientDrawable()
+            dotGd.shape = GradientDrawable.OVAL
+            dotGd.setColor(0xFFFFFFFF.toInt())
+            background = dotGd
+            val lp = LinearLayout.LayoutParams(dotSize, dotSize)
+            lp.rightMargin = dp10
+            layoutParams = lp
+        }
+
         titleText = TextView(ctx).apply {
             text = "价格采集器"
-            textSize = 15f
+            textSize = 16f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             maxLines = 1
+            letterSpacing = 0.05f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         val btnMin = TextView(ctx).apply {
             text = "收起"
-            textSize = 12f
-            setTextColor(0xCCFFFFFF.toInt())
-            setPadding(dp8, dp8, dp8, dp8)
+            textSize = 13f
+            setTextColor(0xDDFFFFFF.toInt())
+            setPadding(dp10, dp6, dp10, dp6)
             setOnClickListener { collapsePanel() }
         }
+        titleBar.addView(dot)
         titleBar.addView(titleText)
         titleBar.addView(btnMin)
 
-        // 标题栏拖动
         titleBar.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -244,24 +269,32 @@ class CollectorAccessibilityService : AccessibilityService() {
         // 内容区
         val content = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp12, dp12, dp12, 0)
+            setPadding(dp14, dp14, dp14, 0)
         }
 
-        // 采集当前页面按钮
+        // 采集当前页面按钮（带按压态）
         val btnCollect = TextView(ctx).apply {
             text = "采集当前页面"
-            textSize = 13f
+            textSize = 14f
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setPadding(0, (density * 10).toInt(), 0, (density * 10).toInt())
-            val gd = GradientDrawable()
-            gd.shape = GradientDrawable.RECTANGLE
-            gd.cornerRadius = density * 10
-            gd.setColor(0xFF5B6AE0.toInt())
-            background = gd
+            setPadding(0, (density * 12).toInt(), 0, (density * 12).toInt())
+            val normalGd = GradientDrawable()
+            normalGd.shape = GradientDrawable.RECTANGLE
+            normalGd.cornerRadius = density * 12
+            normalGd.setColor(0xFF5B4FE8.toInt())
+            val pressedGd = GradientDrawable()
+            pressedGd.shape = GradientDrawable.RECTANGLE
+            pressedGd.cornerRadius = density * 12
+            pressedGd.setColor(0xFF4A3FD0.toInt())
+            val sld = android.graphics.drawable.StateListDrawable()
+            sld.addState(intArrayOf(android.R.attr.state_pressed), pressedGd)
+            sld.addState(intArrayOf(), normalGd)
+            background = sld
+            isClickable = true
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.topMargin = (density * 8).toInt()
+            lp.topMargin = (density * 6).toInt()
             layoutParams = lp
             setOnClickListener { performCollect() }
         }
@@ -270,20 +303,20 @@ class CollectorAccessibilityService : AccessibilityService() {
         // 结果滚动区
         resultText = TextView(ctx).apply {
             text = "点「采集当前页面」手动采集\n或在采集器主页选择App一键采集"
-            textSize = 12f
-            setTextColor(0xFF333333.toInt())
-            setPadding(dp8, dp8, dp8, dp8)
+            textSize = 12.5f
+            setTextColor(0xFF2D3436.toInt())
+            setPadding(dp10, dp10, dp10, dp10)
             setTextIsSelectable(true)
         }
         val scrollView = ScrollView(ctx)
         scrollView.addView(resultText)
         val svBg = GradientDrawable()
         svBg.shape = GradientDrawable.RECTANGLE
-        svBg.cornerRadius = density * 8
-        svBg.setColor(0xFFF5F5F5.toInt())
+        svBg.cornerRadius = density * 10
+        svBg.setColor(0xFFF7F8FA.toInt())
         scrollView.background = svBg
         val svLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (density * 180).toInt())
-        svLp.topMargin = (density * 8).toInt()
+        svLp.topMargin = dp10
         scrollView.layoutParams = svLp
         content.addView(scrollView)
 
@@ -310,8 +343,8 @@ class CollectorAccessibilityService : AccessibilityService() {
         ballView?.visibility = View.VISIBLE
         layoutParams?.let { lp ->
             val density = resources.displayMetrics.density
-            lp.width = (density * 52).toInt()
-            lp.height = (density * 52).toInt()
+            lp.width = (density * 56).toInt()
+            lp.height = (density * 56).toInt()
             windowManager?.updateViewLayout(floatingView, lp)
         }
         isMinimized = true

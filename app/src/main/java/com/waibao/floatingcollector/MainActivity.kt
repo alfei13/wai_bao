@@ -16,16 +16,19 @@ import android.widget.Toast
 import android.app.Activity
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.View
 
 class MainActivity : Activity() {
 
+    private lateinit var statusCard: LinearLayout
     private lateinit var statusText: TextView
+    private lateinit var statusSubText: TextView
+    private lateinit var btnAccessibility: Button
+    private val density by lazy { resources.displayMetrics.density }
+    private val primaryColor = 0xFF5B4FE8.toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        val density = resources.displayMetrics.density
-        val primaryColor = 0xFF5B6AE0.toInt()
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -33,29 +36,44 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
+        // 标题
         val title = TextView(this).apply {
             text = "价格采集器"
-            textSize = 26f
+            textSize = 28f
             setTextColor(primaryColor)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, 16)
+            setPadding(0, 0, 0, 24)
             gravity = Gravity.CENTER
         }
         layout.addView(title)
 
-        statusText = TextView(this).apply {
-            textSize = 14f
-            setPadding(0, 0, 0, 40)
-            gravity = Gravity.CENTER
+        // 无障碍状态卡片（醒目提示）
+        statusCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((density * 16).toInt(), (density * 14).toInt(), (density * 16).toInt(), (density * 14).toInt())
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = (density * 28).toInt()
+            layoutParams = lp
         }
-        layout.addView(statusText)
+        statusText = TextView(this).apply {
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, (density * 4).toInt())
+        }
+        statusSubText = TextView(this).apply {
+            textSize = 13f
+        }
+        statusCard.addView(statusText)
+        statusCard.addView(statusSubText)
+        layout.addView(statusCard)
 
-        val btnAccessibility = Button(this).apply {
+        // 开启无障碍服务按钮
+        btnAccessibility = Button(this).apply {
             text = "开启无障碍服务"
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 32 }
+            ).apply { bottomMargin = (density * 32).toInt() }
             setOnClickListener {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
@@ -65,17 +83,17 @@ class MainActivity : Activity() {
         // 采集区域标题
         val collectLabel = TextView(this).apply {
             text = "一键采集"
-            textSize = 16f
-            setTextColor(0xFF666666.toInt())
+            textSize = 17f
+            setTextColor(0xFF444444.toInt())
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, 16)
+            setPadding(0, 0, 0, (density * 16).toInt())
             gravity = Gravity.CENTER
         }
         layout.addView(collectLabel)
 
-        // 3个App采集按钮
+        // App采集按钮（食行生鲜已隐藏，保留代码以便后续启用）
         val apps = listOf(
-            "食行生鲜" to "shixing",
+            // "食行生鲜" to "shixing",  // 暂时隐藏，需要时取消注释即可恢复
             "大润发优鲜" to "darunfa",
             "菜亿萝" to "caiyiluo"
         )
@@ -87,11 +105,19 @@ class MainActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 setPadding(0, (density * 14).toInt(), 0, (density * 14).toInt())
-                val gd = GradientDrawable()
-                gd.shape = GradientDrawable.RECTANGLE
-                gd.cornerRadius = density * 12
-                gd.setColor(primaryColor)
-                background = gd
+                val normalGd = GradientDrawable()
+                normalGd.shape = GradientDrawable.RECTANGLE
+                normalGd.cornerRadius = density * 12
+                normalGd.setColor(primaryColor)
+                val pressedGd = GradientDrawable()
+                pressedGd.shape = GradientDrawable.RECTANGLE
+                pressedGd.cornerRadius = density * 12
+                pressedGd.setColor(0xFF4A3FD0.toInt())
+                val sld = android.graphics.drawable.StateListDrawable()
+                sld.addState(intArrayOf(android.R.attr.state_pressed), pressedGd)
+                sld.addState(intArrayOf(), normalGd)
+                background = sld
+                isClickable = true
                 val lp = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
@@ -120,7 +146,7 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 24 }
+            ).apply { topMargin = (density * 24).toInt() }
             setOnClickListener {
                 if (isAccessibilityEnabled()) {
                     Toast.makeText(this@MainActivity, "悬浮窗已随服务启动", Toast.LENGTH_LONG).show()
@@ -137,10 +163,35 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        statusText.text = if (isAccessibilityEnabled()) {
-            "无障碍服务：已启用 ✓"
+        updateAccessibilityStatus()
+    }
+
+    private fun updateAccessibilityStatus() {
+        val enabled = isAccessibilityEnabled()
+        val cardGd = GradientDrawable()
+        cardGd.shape = GradientDrawable.RECTANGLE
+        cardGd.cornerRadius = density * 12
+
+        if (enabled) {
+            // 已启用：绿色柔和提示
+            cardGd.setColor(0xFFECFDF5.toInt())
+            cardGd.setStroke((density * 4).toInt(), 0xFF10B981.toInt())
+            statusCard.background = cardGd
+            statusText.text = "✓  无障碍服务已启用"
+            statusText.setTextColor(0xFF059669.toInt())
+            statusSubText.text = "可以选择下方App开始采集"
+            statusSubText.setTextColor(0xFF059669.toInt())
+            btnAccessibility.visibility = View.GONE
         } else {
-            "无障碍服务：未启用（请先开启）"
+            // 未启用：红色醒目警告
+            cardGd.setColor(0xFFFEF3F2.toInt())
+            cardGd.setStroke((density * 4).toInt(), 0xFFFE5C5C.toInt())
+            statusCard.background = cardGd
+            statusText.text = "⚠  无障碍服务未启用"
+            statusText.setTextColor(0xFFE74C3C.toInt())
+            statusSubText.text = "请点击下方按钮开启，否则无法采集"
+            statusSubText.setTextColor(0xFFC0392B.toInt())
+            btnAccessibility.visibility = View.VISIBLE
         }
     }
 
