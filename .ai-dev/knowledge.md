@@ -50,3 +50,19 @@
 - **菜亿萝首页 vs 搜索结果页结构不同**：首页价格是分离的 `￥` + `0.28` 节点（走方式2 findAllYenNodes）；
   搜索结果页价格是合并的 `￥1.58` 节点（走方式3 findAllPriceNodes）。两种结构都需要支持。
 
+## 调试经验（菜亿萝 TAP_REQUEST 机制 + 价格提取修复）
+- **dispatchGesture 在菜亿萝 WebView 上不生效**：MIUI/WebView 限制，`dispatchGesture` 和 `ACTION_CLICK`
+  返回 true 但实际不触发任何操作。解决方案：TAP_REQUEST 机制——无障碍服务在 logcat 输出 `TAP_REQUEST:x:y`，
+  主机脚本 `tap_helper.sh` 监听 logcat 并执行 `adb shell input tap x y`。滑动同理用 `SWIPE_REQUEST:x1:y1:x2:y2:duration`。
+- **AccessibilityNodeInfo.getChild(i) 每次返回新实例**：`===` 引用比较永远失败！
+  缓存的 yenNode 与 `parent.getChild(i)` 是不同对象实例。
+  **修复**：用 `Rect` bounds 比较（`getBoundsInScreen`）来定位节点在父节点 children 中的索引。
+- **菜亿萝搜索结果页是扁平结构**：所有商品节点都是 WebView 的直接子节点（无嵌套商品容器）。
+  顺序：`商品名 → ￥ → 价格数字 → /单位 → 选规格/补货中`。
+  采集逻辑：findAllYenNodes 找所有 ￥ 节点 → findSiblingNumber 向后找数字 → findProductNameFromSiblings 向前找商品名。
+- **菜亿萝搜索结果滚动后混入推荐商品**：滚动到底部会显示"推荐商品"区域，这些商品与搜索关键词无关
+  （如搜"猪肉"出现鱼类）。需注意数据质量，但不影响核心采集功能。
+- **食行生鲜包名 com.gem.tastyfood**：AutoCompleteTextView 是 EditText 子类，
+  findEditText 需同时匹配 `android.widget.EditText` 和 `android.widget.AutoCompleteTextView`。
+  隐私协议弹窗 id: `com.gem.tastyfood:id/btn_agree`，开屏广告跳过 id: `com.gem.tastyfood:id/tvTimer`。
+
