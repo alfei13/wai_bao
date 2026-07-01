@@ -40,7 +40,7 @@ class CollectorAccessibilityService : AccessibilityService() {
 
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
-    private var resultText: TextView? = null
+    private var resultContainer: LinearLayout? = null
     private var titleText: TextView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
@@ -142,10 +142,10 @@ class CollectorAccessibilityService : AccessibilityService() {
             gravity = Gravity.CENTER
             val gd = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
-                intArrayOf(0xFF6C5CE7.toInt(), 0xFF8E7CF0.toInt())
+                intArrayOf(0xFF6C5CE7.toInt(), 0xFFA29BFE.toInt())
             )
             gd.shape = GradientDrawable.OVAL
-            gd.setStroke((density * 2.5f).toInt(), 0x66FFFFFF.toInt())
+            gd.setStroke((density * 2.5f).toInt(), 0x55FFFFFF.toInt())
             background = gd
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -206,7 +206,7 @@ class CollectorAccessibilityService : AccessibilityService() {
             gravity = Gravity.CENTER_VERTICAL
             val gd = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(0xFF5B4FE8.toInt(), 0xFF7B6FF0.toInt())
+                intArrayOf(0xFF6C5CE7.toInt(), 0xFFA29BFE.toInt())
             )
             gd.shape = GradientDrawable.RECTANGLE
             gd.cornerRadii = floatArrayOf(cornerRadius, cornerRadius, cornerRadius, cornerRadius, 0f, 0f, 0f, 0f)
@@ -283,11 +283,11 @@ class CollectorAccessibilityService : AccessibilityService() {
             val normalGd = GradientDrawable()
             normalGd.shape = GradientDrawable.RECTANGLE
             normalGd.cornerRadius = density * 12
-            normalGd.setColor(0xFF5B4FE8.toInt())
+            normalGd.setColor(0xFF6C5CE7.toInt())
             val pressedGd = GradientDrawable()
             pressedGd.shape = GradientDrawable.RECTANGLE
             pressedGd.cornerRadius = density * 12
-            pressedGd.setColor(0xFF4A3FD0.toInt())
+            pressedGd.setColor(0xFF5849D6.toInt())
             val sld = android.graphics.drawable.StateListDrawable()
             sld.addState(intArrayOf(android.R.attr.state_pressed), pressedGd)
             sld.addState(intArrayOf(), normalGd)
@@ -300,16 +300,15 @@ class CollectorAccessibilityService : AccessibilityService() {
         }
         content.addView(btnCollect)
 
-        // 结果滚动区
-        resultText = TextView(ctx).apply {
-            text = "点「采集当前页面」手动采集\n或在采集器主页选择App一键采集"
-            textSize = 12.5f
-            setTextColor(0xFF2D3436.toInt())
+        // 结果滚动区（使用 LinearLayout 容器，每条结果一行）
+        resultContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(dp10, dp10, dp10, dp10)
-            setTextIsSelectable(true)
         }
+        // 默认提示
+        addPlaceholderText("点「采集当前页面」手动采集\n或在采集器主页选择App一键采集")
         val scrollView = ScrollView(ctx)
-        scrollView.addView(resultText)
+        scrollView.addView(resultContainer)
         val svBg = GradientDrawable()
         svBg.shape = GradientDrawable.RECTANGLE
         svBg.cornerRadius = density * 10
@@ -357,11 +356,88 @@ class CollectorAccessibilityService : AccessibilityService() {
 
     private fun updateResult(text: String) {
         handler.post {
-            resultText?.text = text
+            clearResults()
+            addInfoText(text)
             if (autoCollecting) {
                 titleText?.text = "$currentAppName ${currentKeywordIndex}/${keywords.size}"
             }
         }
+    }
+
+    // ===== 结果容器辅助方法 =====
+
+    private fun clearResults() {
+        resultContainer?.removeAllViews()
+    }
+
+    private fun addPlaceholderText(text: String) {
+        val tv = TextView(this).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(0xFFB2BEC3.toInt())
+            gravity = Gravity.CENTER
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.topMargin = (resources.displayMetrics.density * 20).toInt()
+            layoutParams = lp
+        }
+        resultContainer?.addView(tv)
+    }
+
+    private fun addInfoText(text: String) {
+        val tv = TextView(this).apply {
+            this.text = text
+            textSize = 13f
+            setTextColor(0xFF636E72.toInt())
+            gravity = Gravity.CENTER
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.topMargin = (resources.displayMetrics.density * 20).toInt()
+            layoutParams = lp
+        }
+        resultContainer?.addView(tv)
+    }
+
+    private fun addSectionHeader(text: String) {
+        val tv = TextView(this).apply {
+            this.text = text
+            textSize = 13f
+            setTextColor(0xFF6C5CE7.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            val density = resources.displayMetrics.density
+            lp.topMargin = (density * 8).toInt()
+            lp.bottomMargin = (density * 4).toInt()
+            layoutParams = lp
+        }
+        resultContainer?.addView(tv)
+    }
+
+    private fun addResultRow(name: String, price: String) {
+        val density = resources.displayMetrics.density
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = (density * 6).toInt()
+            layoutParams = lp
+        }
+        val nameTv = TextView(this).apply {
+            this.text = name
+            textSize = 12f
+            setTextColor(0xFF2D3436.toInt())
+            maxLines = 1
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.marginEnd = (density * 8).toInt()
+            layoutParams = lp
+        }
+        val priceTv = TextView(this).apply {
+            this.text = price
+            textSize = 13f
+            setTextColor(0xFFE17055.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        row.addView(nameTv)
+        row.addView(priceTv)
+        resultContainer?.addView(row)
     }
 
     // ===== 手动采集 =====
@@ -370,7 +446,7 @@ class CollectorAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow
         if (root == null) {
             Log.w(TAG, "rootInActiveWindow 为空")
-            resultText?.text = "未获取到页面内容"
+            handler.post { clearResults(); addInfoText("未获取到页面内容") }
             return
         }
         Log.i(TAG, "=== 开始采集 ===")
@@ -382,18 +458,21 @@ class CollectorAccessibilityService : AccessibilityService() {
             dumpTexts(root, allText, 0)
             Log.i(TAG, "未找到价格，屏幕文本节点共 ${allText.size} 个:")
             for (t in allText) Log.i(TAG, "  $t")
-            val debug = if (allText.isEmpty()) "（无文本节点）" else allText.take(20).joinToString("\n")
-            resultText?.text = "未采集到价格（$time）\n\n$debug"
+            handler.post {
+                clearResults()
+                addInfoText("未采集到价格（$time）")
+            }
             return
         }
         Log.i(TAG, "采集到 ${items.size} 条价格:")
-        val sb = StringBuilder()
-        sb.append("采集时间：$time\n共 ${items.size} 条\n---\n")
-        for (item in items) {
-            Log.i(TAG, "  ${item.name}  ${item.price}")
-            sb.append("${item.name}\n${item.price}\n\n")
+        handler.post {
+            clearResults()
+            addSectionHeader("采集时间 $time  共${items.size}条")
+            for (item in items) {
+                Log.i(TAG, "  ${item.name}  ${item.price}")
+                addResultRow(item.name, item.price)
+            }
         }
-        resultText?.text = sb.toString()
     }
 
     // ===== 自动采集引擎 =====
@@ -965,19 +1044,20 @@ class CollectorAccessibilityService : AccessibilityService() {
         for ((kw, item) in allResults) {
             Log.i(TAG, "  [$kw] ${item.name} = ${item.price}")
         }
-        // 保存到文件
         saveResultsToFile()
-        // 自动展开悬浮窗显示结果
         if (isMinimized) expandPanel()
-        handler.post { titleText?.text = "价格采集器" }
-        // 更新悬浮窗
-        val sb = StringBuilder()
-        sb.append("采集完成: $currentAppName\n")
-        sb.append("总共 ${allResults.size} 条\n---\n")
-        for ((kw, item) in allResults) {
-            sb.append("[$kw] ${item.name}\n  ${item.price}\n\n")
+        handler.post {
+            titleText?.text = "价格采集器"
+            clearResults()
+            addSectionHeader("采集完成: $currentAppName  共${allResults.size}条")
+            val byKeyword = allResults.groupBy { it.first }
+            for ((kw, items) in byKeyword) {
+                addSectionHeader("【$kw】${items.size}条")
+                for ((_, item) in items) {
+                    addResultRow(item.name, item.price)
+                }
+            }
         }
-        updateResult(sb.toString())
     }
 
     private fun saveResultsToFile() {
