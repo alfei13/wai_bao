@@ -4,6 +4,7 @@
     <queries>
         <package android:name="com.rt.market.fresh" />
         <package android:name="com.caiyiluo.nip" />
+        <package android:name="com.gem.tastyfood" />
     </queries>
 
     <application

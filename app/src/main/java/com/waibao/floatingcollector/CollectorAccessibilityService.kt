@@ -37,6 +37,7 @@ class CollectorAccessibilityService : AccessibilityService() {
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
     private var resultText: TextView? = null
+    private var titleText: TextView? = null
     private var contentLayout: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
@@ -109,28 +110,31 @@ class CollectorAccessibilityService : AccessibilityService() {
 
     private fun buildFloatingView(): View {
         val ctx = this
+        val density = resources.displayMetrics.density
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundResource(android.R.drawable.dialog_holo_light_frame)
-            setPadding(24, 16, 24, 24)
+            setPadding(20, 12, 20, 16)
         }
 
         val titleBar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(8, 8, 8, 8)
+            setPadding(4, 4, 4, 4)
         }
-        val title = TextView(ctx).apply {
+        titleText = TextView(ctx).apply {
             text = "价格采集器"
-            textSize = 15f
+            textSize = 14f
+            maxLines = 1
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+        val title = titleText!!
         val btnHide = Button(ctx).apply {
-            text = "隐藏"
+            text = "—"
             textSize = 12f
-            setOnClickListener { minimize() }
+            setOnClickListener { toggleMinimize() }
         }
         val btnClose = Button(ctx).apply {
-            text = "关闭"
+            text = "×"
             textSize = 12f
             setOnClickListener { removeFloatingWindow() }
         }
@@ -151,44 +155,86 @@ class CollectorAccessibilityService : AccessibilityService() {
             true
         }
 
+        // 3个App自动采集按钮（横向排列）
+        val appButtonRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 4, 0, 4)
+        }
+        val btnShixing = Button(ctx).apply {
+            text = "食行生鲜"
+            textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { startAutoCollect("shixing") }
+        }
+        val btnDarunfa = Button(ctx).apply {
+            text = "大润发"
+            textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { startAutoCollect("darunfa") }
+        }
+        val btnCaiyiluo = Button(ctx).apply {
+            text = "菜亿萝"
+            textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { startAutoCollect("caiyiluo") }
+        }
+        appButtonRow.addView(btnShixing)
+        appButtonRow.addView(btnDarunfa)
+        appButtonRow.addView(btnCaiyiluo)
+
         val btnCollect = Button(ctx).apply {
             text = "采集当前页面"
+            textSize = 12f
             setOnClickListener { performCollect() }
         }
 
         val scrollView = ScrollView(ctx)
         resultText = TextView(ctx).apply {
-            text = "点击「采集」或通过广播触发自动采集"
-            textSize = 13f
-            setPadding(8, 16, 8, 16)
+            text = "点击App按钮自动采集10个商品\n或点「采集当前页面」手动采集"
+            textSize = 12f
+            setPadding(4, 8, 4, 8)
             setTextIsSelectable(true)
         }
         scrollView.addView(resultText)
         scrollView.layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            LinearLayout.LayoutParams.MATCH_PARENT, (density * 100).toInt()
         )
 
         contentLayout = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
         }
+        (contentLayout as LinearLayout).addView(appButtonRow)
         (contentLayout as LinearLayout).addView(btnCollect)
         (contentLayout as LinearLayout).addView(scrollView)
 
         root.addView(titleBar)
         root.addView(contentLayout)
         root.layoutParams = LinearLayout.LayoutParams(
-            (resources.displayMetrics.density * 320).toInt(),
-            (resources.displayMetrics.density * 360).toInt()
+            (density * 260).toInt(),
+            LinearLayout.LayoutParams.WRAP_CONTENT
         )
         return root
     }
 
-    private fun minimize() {
-        contentLayout?.visibility = View.GONE
-        layoutParams?.let { lp ->
-            lp.width = WindowManager.LayoutParams.WRAP_CONTENT
-            lp.height = WindowManager.LayoutParams.WRAP_CONTENT
-            windowManager?.updateViewLayout(floatingView, lp)
+    private var isMinimized = false
+
+    private fun toggleMinimize() {
+        if (isMinimized) {
+            contentLayout?.visibility = View.VISIBLE
+            layoutParams?.let { lp ->
+                lp.width = (resources.displayMetrics.density * 260).toInt()
+                lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+                windowManager?.updateViewLayout(floatingView, lp)
+            }
+            isMinimized = false
+        } else {
+            contentLayout?.visibility = View.GONE
+            layoutParams?.let { lp ->
+                lp.width = WindowManager.LayoutParams.WRAP_CONTENT
+                lp.height = WindowManager.LayoutParams.WRAP_CONTENT
+                windowManager?.updateViewLayout(floatingView, lp)
+            }
+            isMinimized = true
         }
     }
 
@@ -198,7 +244,12 @@ class CollectorAccessibilityService : AccessibilityService() {
     }
 
     private fun updateResult(text: String) {
-        handler.post { resultText?.text = text }
+        handler.post {
+            resultText?.text = text
+            if (autoCollecting) {
+                titleText?.text = "$currentAppName ${currentKeywordIndex}/${keywords.size}"
+            }
+        }
     }
 
     // ===== 手动采集 =====
@@ -237,16 +288,29 @@ class CollectorAccessibilityService : AccessibilityService() {
 
     private fun startAutoCollect(app: String) {
         currentApp = app
-        currentAppName = if (app == "darunfa") "大润发优鲜" else "菜亿萝"
+        currentAppName = when (app) {
+            "darunfa" -> "大润发优鲜"
+            "caiyiluo" -> "菜亿萝"
+            "shixing" -> "食行生鲜"
+            else -> app
+        }
         currentKeywordIndex = 0
         searchRetryCount = 0
         allResults.clear()
         autoCollecting = true
 
-        val packageName = if (app == "darunfa") "com.rt.market.fresh" else "com.caiyiluo.nip"
+        val packageName = when (app) {
+            "darunfa" -> "com.rt.market.fresh"
+            "caiyiluo" -> "com.caiyiluo.nip"
+            "shixing" -> "com.gem.tastyfood"
+            else -> return
+        }
         Log.i(TAG, "=== 开始自动采集: $currentAppName ($packageName) ===")
         Log.i(TAG, "关键词列表: $keywords")
         updateResult("开始自动采集: $currentAppName\n正在启动目标App...")
+        // 自动采集时自动最小化悬浮窗，避免遮挡目标App
+        if (!isMinimized) toggleMinimize()
+        handler.post { titleText?.text = "$currentAppName 0/${keywords.size}" }
 
         // 由App自己启动目标App（用户要求无需手动操作）
         launchTargetApp(packageName)
@@ -288,6 +352,70 @@ class CollectorAccessibilityService : AccessibilityService() {
         return false
     }
 
+    // 处理食行生鲜隐私协议弹窗和开屏广告，返回true表示已处理
+    private fun handleShixingDialogsIfPresent(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val pkg = root.packageName?.toString() ?: ""
+        if (pkg != "com.gem.tastyfood") return false
+        // 隐私协议弹窗: 点"我同意"
+        val agreeBtn = findNodeById(root, "com.gem.tastyfood:id/btn_agree")
+        if (agreeBtn != null) {
+            Log.i(TAG, "食行生鲜: 点击隐私协议'我同意'")
+            agreeBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return true
+        }
+        // 开屏广告: 点"跳过"
+        val skipBtn = findNodeById(root, "com.gem.tastyfood:id/tvTimer")
+        if (skipBtn != null) {
+            Log.i(TAG, "食行生鲜: 点击跳过开屏广告")
+            skipBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return true
+        }
+        return false
+    }
+
+    private var splashRetryCount = 0
+
+    // 处理通用开屏广告（"跳过"按钮），返回true表示已处理
+    private fun handleSplashScreenIfPresent(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val skipNode = findNodeByTextTraversal(root, "跳过")
+        if (skipNode != null) {
+            splashRetryCount++
+            if (splashRetryCount <= 3) {
+                // 用TAP_REQUEST让主机脚本执行adb tap（dispatchGesture在菜亿萝WebView上不生效）
+                val rect = Rect()
+                skipNode.getBoundsInScreen(rect)
+                val cx = rect.centerX()
+                val cy = rect.centerY()
+                Log.i(TAG, "检测到开屏广告(TAP_REQUEST $splashRetryCount/3)，跳过位置: $rect")
+                Log.i(TAG, "TAP_REQUEST:$cx:$cy")
+                // dispatchGesture作为备份
+                val path = Path()
+                path.moveTo(cx.toFloat(), cy.toFloat())
+                val stroke = GestureDescription.StrokeDescription(path, 0, 100)
+                val gesture = GestureDescription.Builder().addStroke(stroke).build()
+                dispatchGesture(gesture, null, null)
+            } else {
+                Log.i(TAG, "开屏广告未消失，等待自动关闭 (count=$splashRetryCount)")
+            }
+            return true
+        }
+        splashRetryCount = 0
+        return false
+    }
+
+    private fun findNodeByTextTraversal(node: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+        val t = node.text?.toString() ?: ""
+        if (t.contains(text)) return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val result = findNodeByTextTraversal(child, text)
+            if (result != null) return result
+        }
+        return null
+    }
+
     private fun autoCollectStepSearch() {
         if (!autoCollecting) return
         if (currentKeywordIndex >= keywords.size) {
@@ -315,9 +443,24 @@ class CollectorAccessibilityService : AccessibilityService() {
             handler.postDelayed({ autoCollectStepSearch() }, 1500)
             return
         }
+        // 处理食行生鲜隐私协议弹窗和开屏广告
+        if (handleShixingDialogsIfPresent()) {
+            handler.postDelayed({ autoCollectStepSearch() }, 3000)
+            return
+        }
+        // 处理通用开屏广告（"跳过"按钮）
+        if (handleSplashScreenIfPresent()) {
+            handler.postDelayed({ autoCollectStepSearch() }, 2000)
+            return
+        }
 
         val pkg = root.packageName?.toString() ?: ""
-        val targetPkg = if (currentApp == "darunfa") "com.rt.market.fresh" else "com.caiyiluo.nip"
+        val targetPkg = when (currentApp) {
+            "darunfa" -> "com.rt.market.fresh"
+            "caiyiluo" -> "com.caiyiluo.nip"
+            "shixing" -> "com.gem.tastyfood"
+            else -> ""
+        }
         // 若前台不是目标App，尝试重新启动
         if (pkg != targetPkg) {
             Log.w(TAG, "当前前台: $pkg，非目标App: $targetPkg，尝试重新启动")
@@ -331,46 +474,92 @@ class CollectorAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (currentApp == "darunfa") {
-            // 优先找 EditText（已在搜索输入页 SearchActivity）
-            val editText = findEditText(root)
-            if (editText != null) {
-                searchRetryCount = 0
-                autoCollectStepInputDirectly(keyword, editText)
-            } else {
-                // 首页: 找"搜索"入口按钮; 结果页: 找搜索框区域 v_keyword_blank
-                val entry = findClickableNodeByText(root, "搜索")
-                    ?: findNodeById(root, "com.rt.market.fresh:id/v_keyword_blank")
-                    ?: findNodeById(root, "com.rt.market.fresh:id/hsv_keyword")
-                if (entry != null) {
-                    Log.i(TAG, "点击搜索入口/搜索框区域进入搜索页")
-                    entry.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        // ===== 各App独立搜索流程（避免逻辑互相干扰） =====
+        when (currentApp) {
+            "darunfa" -> {
+                // 大润发优鲜: 首页点"搜索"→KeyWordSearchListActivity→点v_keyword_blank→SearchActivity(EditText)
+                val editText = findEditText(root)
+                if (editText != null) {
                     searchRetryCount = 0
-                    handler.postDelayed({ autoCollectStepInput(keyword) }, 2000)
+                    autoCollectStepInputDirectly(keyword, editText)
+                } else {
+                    val entry = findClickableNodeByText(root, "搜索")
+                        ?: findNodeById(root, "com.rt.market.fresh:id/v_keyword_blank")
+                        ?: findNodeById(root, "com.rt.market.fresh:id/hsv_keyword")
+                    if (entry != null) {
+                        Log.i(TAG, "大润发: 点击搜索入口/搜索框区域进入搜索页")
+                        entry.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        searchRetryCount = 0
+                        handler.postDelayed({ autoCollectStepInput(keyword) }, 2000)
+                    } else {
+                        searchRetryCount++
+                        if (searchRetryCount > 8) {
+                            skipKeyword(keyword, "大润发: 未找到搜索入口")
+                            return
+                        }
+                        Log.w(TAG, "大润发: 未找到搜索入口，重试 $searchRetryCount/8")
+                        handler.postDelayed({ autoCollectStepSearch() }, 2000)
+                    }
+                }
+            }
+            "caiyiluo" -> {
+                // 菜亿萝: WebView应用，dispatchGesture和ACTION_CLICK在WebView上不生效
+                // 解决方案: 用ACTION_SET_TEXT输入关键词，通过TAP_REQUEST日志让主机脚本执行adb tap
+                val editText = findEditText(root)
+                if (editText != null) {
+                    // 找到EditText，输入关键词并通过TAP_REQUEST触发搜索
+                    val btnNode = findNodeByTextTraversal(root, "搜索")
+                    if (btnNode != null) {
+                        val btnRect = Rect()
+                        btnNode.getBoundsInScreen(btnRect)
+                        Log.i(TAG, "菜亿萝: 找到EditText和搜索按钮: $btnRect")
+                        searchRetryCount = 0
+                        autoCollectStepInputCaiyiluoWithTapRequest(keyword, editText, btnRect)
+                    } else {
+                        // 有EditText但没找到"搜索"文本，可能已在搜索结果页，直接输入
+                        Log.i(TAG, "菜亿萝: 有EditText但无搜索按钮，直接输入并IME ENTER")
+                        searchRetryCount = 0
+                        autoCollectStepInputDirectlyCaiyiluo(keyword, editText)
+                    }
                 } else {
                     searchRetryCount++
-                    if (searchRetryCount > 5) {
-                        skipKeyword(keyword, "未找到搜索入口")
+                    if (searchRetryCount == 3) {
+                        Log.w(TAG, "菜亿萝: 未找到EditText，dump节点:")
+                        val texts = mutableListOf<String>()
+                        dumpNodesForDebug(root, texts, 0)
+                        for (t in texts.take(30)) Log.w(TAG, "  $t")
+                    }
+                    if (searchRetryCount > 8) {
+                        skipKeyword(keyword, "菜亿萝: 未找到EditText")
                         return
                     }
-                    Log.w(TAG, "未找到搜索入口，重试 $searchRetryCount/5")
+                    Log.w(TAG, "菜亿萝: 未找到EditText，重试 $searchRetryCount/8")
                     handler.postDelayed({ autoCollectStepSearch() }, 2000)
                 }
             }
-        } else {
-            // 菜亿萝: 搜索框直接在首页
-            val editText = findEditText(root)
-            if (editText != null) {
-                searchRetryCount = 0
-                autoCollectStepInputDirectly(keyword, editText)
-            } else {
-                searchRetryCount++
-                if (searchRetryCount > 5) {
-                    skipKeyword(keyword, "未找到搜索框")
-                    return
+            "shixing" -> {
+                // 食行生鲜: 首页点searchTopView→搜索输入页(AutoCompleteTextView)
+                val editText = findEditText(root)
+                if (editText != null) {
+                    searchRetryCount = 0
+                    autoCollectStepInputDirectly(keyword, editText)
+                } else {
+                    val searchTopView = findNodeById(root, "com.gem.tastyfood:id/searchTopView")
+                    if (searchTopView != null) {
+                        Log.i(TAG, "食行生鲜: 点击搜索栏区域进入搜索输入页")
+                        searchTopView.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        searchRetryCount = 0
+                        handler.postDelayed({ autoCollectStepInput(keyword) }, 2000)
+                    } else {
+                        searchRetryCount++
+                        if (searchRetryCount > 8) {
+                            skipKeyword(keyword, "食行生鲜: 未找到搜索栏")
+                            return
+                        }
+                        Log.w(TAG, "食行生鲜: 未找到搜索栏，重试 $searchRetryCount/8")
+                        handler.postDelayed({ autoCollectStepSearch() }, 2000)
+                    }
                 }
-                Log.w(TAG, "未找到搜索框，重试 $searchRetryCount/5")
-                handler.postDelayed({ autoCollectStepSearch() }, 2000)
             }
         }
     }
@@ -410,6 +599,11 @@ class CollectorAccessibilityService : AccessibilityService() {
             }
             searchRetryCount++
             if (searchRetryCount > 6) {
+                // debug: dump所有文本节点和类名
+                Log.w(TAG, "搜索页未找到输入框，dump节点:")
+                val texts = mutableListOf<String>()
+                dumpNodesForDebug(root, texts, 0)
+                for (t in texts.take(30)) Log.w(TAG, "  $t")
                 skipKeyword(keyword, "搜索页未找到输入框")
                 return
             }
@@ -422,14 +616,25 @@ class CollectorAccessibilityService : AccessibilityService() {
         if (!autoCollecting) return
         Log.i(TAG, "输入关键词: $keyword")
         // 输入前先记录"搜索"按钮位置（输入后可能消失，用坐标兜底）
+        searchBtnBounds = null
         val preRoot = rootInActiveWindow
         if (preRoot != null) {
+            // 先找可点击的"搜索"按钮（大润发/食行生鲜）
             val btn = findClickableNodeByText(preRoot, "搜索")
             if (btn != null) {
                 val rect = Rect()
                 btn.getBoundsInScreen(rect)
                 searchBtnBounds = rect
-                Log.i(TAG, "记录搜索按钮位置: $rect")
+                Log.i(TAG, "记录搜索按钮位置(可点击): $rect")
+            } else {
+                // 菜亿萝: "搜索"文本不可点击，用文本遍历查找其坐标
+                val btnNode = findNodeByTextTraversal(preRoot, "搜索")
+                if (btnNode != null) {
+                    val rect = Rect()
+                    btnNode.getBoundsInScreen(rect)
+                    searchBtnBounds = rect
+                    Log.i(TAG, "记录搜索按钮位置(文本遍历): $rect")
+                }
             }
         }
         val args = Bundle()
@@ -444,29 +649,146 @@ class CollectorAccessibilityService : AccessibilityService() {
             handler.postDelayed({ autoCollectStepTriggerSearch(keyword) }, 1500)
             return
         }
-        // 找"搜索"按钮点击
+        var triggered = false
+        // 方式1: 找可点击的"搜索"按钮点击（大润发/食行生鲜）
         val searchBtn = findClickableNodeByText(root, "搜索")
         if (searchBtn != null) {
-            Log.i(TAG, "点击搜索按钮触发搜索")
+            Log.i(TAG, "点击搜索按钮触发搜索(可点击)")
             searchBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            triggered = true
         } else {
-            // 搜索按钮可能消失（WebView重渲染），用记录的坐标点击兜底
-            val rect = searchBtnBounds
-            if (rect != null) {
+            // 菜亿萝: "搜索"文本不可点击，尝试多种方式
+            val btnNode = findNodeByTextTraversal(root, "搜索")
+            if (btnNode != null) {
+                // 方式2: 直接对"搜索"节点执行ACTION_CLICK（即使isClickable=false，WebView有时也能响应）
+                Log.i(TAG, "尝试对'搜索'文本节点执行ACTION_CLICK")
+                val clicked = btnNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i(TAG, "ACTION_CLICK结果: $clicked")
+                if (clicked) triggered = true
+            }
+            if (!triggered) {
+                // 方式3: 用dispatchGesture坐标点击（多次尝试，不同时长）
+                val targetRect: Rect? = if (btnNode != null) {
+                    Rect().also { btnNode.getBoundsInScreen(it) }
+                } else searchBtnBounds
+                if (targetRect != null) {
+                    val cx = targetRect.centerX().toFloat()
+                    val cy = targetRect.centerY().toFloat()
+                    Log.i(TAG, "用坐标点击搜索: ($cx, $cy) rect=$targetRect")
+                    val path = Path()
+                    path.moveTo(cx, cy)
+                    // 用较长的时间确保WebView接收事件
+                    val stroke = GestureDescription.StrokeDescription(path, 0, 150)
+                    val gesture = GestureDescription.Builder().addStroke(stroke).build()
+                    val result = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                        override fun onCompleted(gesture: GestureDescription?) {
+                            Log.i(TAG, "dispatchGesture onCompleted")
+                        }
+                        override fun onCancelled(gesture: GestureDescription?) {
+                            Log.w(TAG, "dispatchGesture onCancelled")
+                        }
+                    }, null)
+                    Log.i(TAG, "dispatchGesture返回: $result")
+                    triggered = true
+                }
+            }
+            if (!triggered && searchBtnBounds != null) {
+                // 方式4: 用记录的坐标兜底
+                val rect = searchBtnBounds!!
                 val cx = rect.centerX().toFloat()
                 val cy = rect.centerY().toFloat()
-                Log.i(TAG, "搜索按钮消失，用坐标点击: ($cx, $cy)")
+                Log.i(TAG, "用记录坐标点击搜索: ($cx, $cy)")
                 val path = Path()
                 path.moveTo(cx, cy)
-                val stroke = GestureDescription.StrokeDescription(path, 0, 50)
+                val stroke = GestureDescription.StrokeDescription(path, 0, 150)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
                 dispatchGesture(gesture, null, null)
-            } else {
-                Log.i(TAG, "未找到搜索按钮且无坐标记录，尝试IME enter")
+                triggered = true
+            }
+        }
+        if (!triggered) {
+            // 方式5: 最后兜底 - 对输入框执行IME ENTER
+            Log.i(TAG, "所有搜索触发方式失败，尝试IME ENTER")
+            val editText = findEditText(root)
+            if (editText != null) {
+                editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                performGlobalAction(GLOBAL_ACTION_DPAD_CENTER)
             }
         }
         // 等待搜索结果加载
         handler.postDelayed({ autoCollectStepCollect(keyword) }, 4000)
+    }
+
+    // 菜亿萝专用: 输入关键词后通过TAP_REQUEST日志让主机脚本执行adb tap（dispatchGesture在WebView上不生效）
+    private fun autoCollectStepInputCaiyiluoWithTapRequest(keyword: String, editText: AccessibilityNodeInfo, searchBtnRect: Rect) {
+        if (!autoCollecting) return
+        Log.i(TAG, "菜亿萝: 输入关键词: $keyword")
+        // 先聚焦EditText
+        editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        // 设置文本
+        val args = Bundle()
+        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, keyword)
+        val setResult = editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        Log.i(TAG, "菜亿萝: ACTION_SET_TEXT结果: $setResult")
+        // 等待文本设置完成后，通过TAP_REQUEST让主机脚本执行adb tap
+        handler.postDelayed({
+            if (!autoCollecting) return@postDelayed
+            val cx = searchBtnRect.centerX()
+            val cy = searchBtnRect.centerY()
+            Log.i(TAG, "TAP_REQUEST:$cx:$cy")
+            Log.i(TAG, "菜亿萝: 已发送TAP_REQUEST ($cx, $cy)，等待主机脚本执行点击")
+            // 也尝试dispatchGesture作为备份（可能不生效但无副作用）
+            val path = Path()
+            path.moveTo(cx.toFloat(), cy.toFloat())
+            val stroke = GestureDescription.StrokeDescription(path, 0, 150)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            dispatchGesture(gesture, null, null)
+            // 也尝试ACTION_IME_ENTER
+            val ACTION_IME_ENTER = 0x400000
+            editText.performAction(ACTION_IME_ENTER)
+            // 等待搜索结果加载
+            handler.postDelayed({ autoCollectStepCollect(keyword) }, 4500)
+        }, 1500)
+    }
+
+    // 菜亿萝专用: 输入关键词后用ACTION_IME_ENTER触发搜索（避免点击WebView中的"搜索"文本）
+    private fun autoCollectStepInputDirectlyCaiyiluo(keyword: String, editText: AccessibilityNodeInfo) {
+        if (!autoCollecting) return
+        Log.i(TAG, "菜亿萝: 输入关键词: $keyword")
+        // 先聚焦EditText
+        editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        // 设置文本
+        val args = Bundle()
+        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, keyword)
+        val setResult = editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        Log.i(TAG, "菜亿萝: ACTION_SET_TEXT结果: $setResult")
+        // 等待文本设置完成后触发IME ENTER
+        handler.postDelayed({
+            if (!autoCollecting) return@postDelayed
+            // 尝试ACTION_IME_ENTER (API 30+, 值=0x400000)
+            val ACTION_IME_ENTER = 0x400000
+            val imeEnterResult = editText.performAction(ACTION_IME_ENTER)
+            Log.i(TAG, "菜亿萝: ACTION_IME_ENTER结果: $imeEnterResult")
+            // 也尝试点击"搜索"作为备份（虽然可能不生效）
+            val root = rootInActiveWindow
+            if (root != null) {
+                val btnNode = findNodeByTextTraversal(root, "搜索")
+                if (btnNode != null) {
+                    val rect = Rect()
+                    btnNode.getBoundsInScreen(rect)
+                    Log.i(TAG, "菜亿萝: 也尝试点击搜索文本: $rect")
+                    btnNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    // dispatchGesture兜底
+                    val path = Path()
+                    path.moveTo(rect.centerX().toFloat(), rect.centerY().toFloat())
+                    val stroke = GestureDescription.StrokeDescription(path, 0, 150)
+                    val gesture = GestureDescription.Builder().addStroke(stroke).build()
+                    dispatchGesture(gesture, null, null)
+                }
+            }
+            // 等待搜索结果加载
+            handler.postDelayed({ autoCollectStepCollect(keyword) }, 4000)
+        }, 1500)
     }
 
     private fun autoCollectStepCollect(keyword: String) {
@@ -533,6 +855,9 @@ class CollectorAccessibilityService : AccessibilityService() {
         }
         // 保存到文件
         saveResultsToFile()
+        // 自动恢复悬浮窗显示结果
+        if (isMinimized) toggleMinimize()
+        handler.post { titleText?.text = "价格采集器" }
         // 更新悬浮窗
         val sb = StringBuilder()
         sb.append("采集完成: $currentAppName\n")
@@ -545,7 +870,12 @@ class CollectorAccessibilityService : AccessibilityService() {
 
     private fun saveResultsToFile() {
         try {
-            val fileName = if (currentApp == "darunfa") "采集结果_大润发优鲜.txt" else "采集结果_菜亿萝.txt"
+            val fileName = when (currentApp) {
+                "darunfa" -> "采集结果_大润发优鲜.txt"
+                "caiyiluo" -> "采集结果_菜亿萝.txt"
+                "shixing" -> "采集结果_食行生鲜.txt"
+                else -> "采集结果_未知.txt"
+            }
             val file = File(getExternalFilesDir(null), fileName)
             val writer = FileWriter(file)
             writer.write("$currentAppName 自动采集结果\n")
@@ -596,7 +926,13 @@ class CollectorAccessibilityService : AccessibilityService() {
     }
 
     private fun findEditText(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (root.className == "android.widget.EditText" && root.isVisibleToUser) return root
+        if (root.isVisibleToUser) {
+            val cls = root.className?.toString() ?: ""
+            if (cls == "android.widget.EditText" || cls == "android.widget.AutoCompleteTextView") return root
+            // WebView内的input元素: 检查是否支持ACTION_SET_TEXT
+            val actions = root.actions
+            if ((actions and AccessibilityNodeInfo.ACTION_SET_TEXT) != 0 && root.isEditable) return root
+        }
         for (i in 0 until root.childCount) {
             val child = root.getChild(i) ?: continue
             val result = findEditText(child)
@@ -605,9 +941,36 @@ class CollectorAccessibilityService : AccessibilityService() {
         return null
     }
 
+    private fun findAllEditTexts(node: AccessibilityNodeInfo, list: MutableList<AccessibilityNodeInfo>) {
+        if (node.isVisibleToUser) {
+            val cls = node.className?.toString() ?: ""
+            if (cls == "android.widget.EditText" || cls == "android.widget.AutoCompleteTextView") {
+                list.add(node)
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            findAllEditTexts(child, list)
+        }
+    }
+
     private fun findNodeById(root: AccessibilityNodeInfo, id: String): AccessibilityNodeInfo? {
         val nodes = root.findAccessibilityNodeInfosByViewId(id)
         return nodes.firstOrNull { it.isVisibleToUser }
+    }
+
+    private fun dumpNodesForDebug(node: AccessibilityNodeInfo, list: MutableList<String>, depth: Int) {
+        val text = node.text?.toString()?.trim() ?: ""
+        val desc = node.contentDescription?.toString()?.trim() ?: ""
+        val cls = node.className?.toString()?.substringAfterLast('.') ?: ""
+        val editable = node.isEditable
+        if (text.isNotEmpty() || desc.isNotEmpty() || editable) {
+            list.add("[$depth] cls=$cls editable=$editable text='$text' desc='$desc'")
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            dumpNodesForDebug(child, list, depth + 1)
+        }
     }
 
     private fun findSiblingByViewId(priceNode: AccessibilityNodeInfo, viewId: String): String {
@@ -623,6 +986,10 @@ class CollectorAccessibilityService : AccessibilityService() {
     }
 
     private fun scrollDown() {
+        // 菜亿萝WebView需要通过SWIPE_REQUEST让主机脚本执行adb swipe
+        if (currentApp == "caiyiluo") {
+            Log.i(TAG, "SWIPE_REQUEST:540:1800:540:400:500")
+        }
         val path = Path()
         path.moveTo(540f, 1800f)
         path.lineTo(540f, 400f)
@@ -655,13 +1022,15 @@ class CollectorAccessibilityService : AccessibilityService() {
             if (results.isNotEmpty()) return results
         }
 
-        // 方式2: 菜亿萝专用 - ￥节点 + 同级数字 + 祖先级商品名
+        // 方式2: 菜亿萝专用 - ￥节点 + 同级数字 + 兄弟级商品名（扁平结构）
         val yenNodes = mutableListOf<AccessibilityNodeInfo>()
         findAllYenNodes(root, yenNodes)
+        Log.i(TAG, "采集: 找到 ${yenNodes.size} 个￥节点")
         if (yenNodes.isNotEmpty()) {
             for (yenNode in yenNodes) {
                 val priceNum = findSiblingNumber(yenNode) ?: continue
-                val name = findProductNameFromAncestors(yenNode, 2)
+                val name = findProductNameFromSiblings(yenNode)
+                Log.i(TAG, "  ￥节点: price=$priceNum name='$name'")
                 if (name.isNotEmpty() && !usedNames.contains(name)) {
                     usedNames.add(name)
                     results.add(SkuItem(name, "¥$priceNum"))
@@ -673,10 +1042,12 @@ class CollectorAccessibilityService : AccessibilityService() {
         // 方式3: 通用 - 找包含 ¥ 的文本节点
         val textPriceNodes = mutableListOf<AccessibilityNodeInfo>()
         findAllPriceNodes(root, textPriceNodes)
+        Log.i(TAG, "采集: 找到 ${textPriceNodes.size} 个¥文本节点")
         for (priceNode in textPriceNodes) {
             val rawPrice = priceNode.text?.toString()?.trim() ?: continue
             val cleanPrice = Regex("¥\\s*[\\d.]+(?:/\\S+)?").find(rawPrice)?.value ?: rawPrice
             val name = findProductName(priceNode)
+            Log.i(TAG, "  ¥文本: raw='$rawPrice' clean='$cleanPrice' name='$name'")
             if (name.isNotEmpty() && !usedNames.contains(name)) {
                 usedNames.add(name)
                 results.add(SkuItem(name, cleanPrice))
@@ -696,15 +1067,51 @@ class CollectorAccessibilityService : AccessibilityService() {
         }
     }
 
+    // 注意: AccessibilityNodeInfo.getChild(i) 每次返回新实例，
+    // === 引用比较永远失败，必须用 Rect bounds 比较来定位节点索引。
     private fun findSiblingNumber(yenNode: AccessibilityNodeInfo): String? {
         val parent = yenNode.parent ?: return null
+        val yenRect = Rect()
+        yenNode.getBoundsInScreen(yenRect)
+        var yenIndex = -1
         for (i in 0 until parent.childCount) {
             val child = parent.getChild(i) ?: continue
-            if (child === yenNode) continue
+            val childRect = Rect()
+            child.getBoundsInScreen(childRect)
+            if (childRect == yenRect) { yenIndex = i; break }
+        }
+        if (yenIndex < 0) return null
+        // 只看￥节点之后的兄弟节点，找到第一个数字（价格）
+        for (i in yenIndex + 1 until parent.childCount) {
+            val child = parent.getChild(i) ?: continue
             val text = child.text?.toString()?.trim() ?: continue
             if (text.matches(Regex("\\d+(\\.\\d+)?"))) return text
+            if (text == "￥" || text == "¥") break
         }
         return null
+    }
+
+    // 菜亿萝搜索结果页是扁平结构：所有节点都是WebView的直接子节点
+    // 商品名在￥节点之前，价格在￥节点之后
+    private fun findProductNameFromSiblings(yenNode: AccessibilityNodeInfo): String {
+        val parent = yenNode.parent ?: return ""
+        val yenRect = Rect()
+        yenNode.getBoundsInScreen(yenRect)
+        var yenIndex = -1
+        for (i in 0 until parent.childCount) {
+            val child = parent.getChild(i) ?: continue
+            val childRect = Rect()
+            child.getBoundsInScreen(childRect)
+            if (childRect == yenRect) { yenIndex = i; break }
+        }
+        if (yenIndex < 0) return ""
+        // 从￥节点向前查找，找到第一个合法的商品名
+        for (i in yenIndex - 1 downTo maxOf(0, yenIndex - 10)) {
+            val child = parent.getChild(i) ?: continue
+            val text = child.text?.toString()?.trim() ?: continue
+            if (isCaiyiluoProductName(text)) return text
+        }
+        return ""
     }
 
     private fun findProductNameFromAncestors(node: AccessibilityNodeInfo, maxLevels: Int): String {
@@ -734,6 +1141,7 @@ class CollectorAccessibilityService : AccessibilityService() {
         if (text.isNullOrEmpty()) return false
         if (text == "￥" || text == "¥") return false
         if (text.matches(Regex("\\d+(\\.\\d+)?"))) return false
+        if (text.startsWith("pages/")) return false
         if (text.startsWith("库存")) return false
         if (text.startsWith("正价")) return false
         if (text == "add" || text == "cart") return false
@@ -805,6 +1213,7 @@ class CollectorAccessibilityService : AccessibilityService() {
         if (text.isNullOrEmpty()) return false
         if (text.contains("¥") || text.contains("￥")) return false
         if (text.startsWith("/")) return false
+        if (text.startsWith("pages/")) return false
         if (text.length < 2) return false
         val excludeKeywords = listOf("购物车", "购买", "立即", "加入", "确定", "取消", "搜索", "返回",
             "收藏", "分享", "评价", "评论", "规格", "数量", "配送", "运费", "已选", "选择",
