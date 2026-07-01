@@ -1,5 +1,4 @@
-.ai-dev/logs/
-.ai-dev/*.log
+.ai-dev/
 .env
 __pycache__/
 *.pyc
@@ -12,5 +11,4 @@ target/
 .DS_Store
 local.properties
 .gradle/
-build/
 *.apk
