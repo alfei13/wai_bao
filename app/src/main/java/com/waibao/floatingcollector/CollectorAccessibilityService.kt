@@ -814,6 +814,12 @@ class CollectorAccessibilityService : AccessibilityService() {
             allResults.add(keyword to item)
         }
 
+        // 菜亿萝滚动后会加载推荐商品混入结果，首屏已足够，跳过滚动
+        if (currentApp == "caiyiluo") {
+            autoCollectStepBack(keyword, items)
+            return
+        }
+
         // 滚动后采集更多
         handler.postDelayed({ autoCollectStepScrollAndCollect(keyword, items) }, 1500)
     }
