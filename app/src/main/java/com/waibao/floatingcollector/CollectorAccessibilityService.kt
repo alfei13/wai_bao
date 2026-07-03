@@ -219,12 +219,17 @@ class CollectorAccessibilityService : AccessibilityService() {
     private var isMinimized = false
 
     private fun toggleMinimize() {
+        val view = floatingView
+        if (view == null) {
+            isMinimized = false
+            return
+        }
         if (isMinimized) {
             contentLayout?.visibility = View.VISIBLE
             layoutParams?.let { lp ->
                 lp.width = (resources.displayMetrics.density * 260).toInt()
                 lp.height = WindowManager.LayoutParams.WRAP_CONTENT
-                windowManager?.updateViewLayout(floatingView, lp)
+                windowManager?.updateViewLayout(view, lp)
             }
             isMinimized = false
         } else {
@@ -232,7 +237,7 @@ class CollectorAccessibilityService : AccessibilityService() {
             layoutParams?.let { lp ->
                 lp.width = WindowManager.LayoutParams.WRAP_CONTENT
                 lp.height = WindowManager.LayoutParams.WRAP_CONTENT
-                windowManager?.updateViewLayout(floatingView, lp)
+                windowManager?.updateViewLayout(view, lp)
             }
             isMinimized = true
         }
@@ -241,6 +246,7 @@ class CollectorAccessibilityService : AccessibilityService() {
     private fun removeFloatingWindow() {
         try { floatingView?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         floatingView = null
+        isMinimized = false
     }
 
     private fun updateResult(text: String) {
@@ -308,7 +314,8 @@ class CollectorAccessibilityService : AccessibilityService() {
         Log.i(TAG, "=== 开始自动采集: $currentAppName ($packageName) ===")
         Log.i(TAG, "关键词列表: $keywords")
         updateResult("开始自动采集: $currentAppName\n正在启动目标App...")
-        // 自动采集时自动最小化悬浮窗，避免遮挡目标App
+        // 悬浮窗可能已被关闭，先确保存在再最小化
+        if (floatingView == null) showFloatingWindow()
         if (!isMinimized) toggleMinimize()
         handler.post { titleText?.text = "$currentAppName 0/${keywords.size}" }
 
@@ -856,6 +863,7 @@ class CollectorAccessibilityService : AccessibilityService() {
         // 保存到文件
         saveResultsToFile()
         // 自动恢复悬浮窗显示结果
+        if (floatingView == null) showFloatingWindow()
         if (isMinimized) toggleMinimize()
         handler.post { titleText?.text = "价格采集器" }
         // 更新悬浮窗
