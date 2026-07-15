@@ -42,7 +42,8 @@ class CollectorAccessibilityService : AccessibilityService() {
     private var layoutParams: WindowManager.LayoutParams? = null
 
     // ===== 自动采集引擎状态 =====
-    private val keywords = listOf("鸡蛋", "猪肉", "白菜", "土豆", "番茄", "黄瓜", "牛奶", "面包", "苹果", "香蕉")
+    private var keywords = listOf("鸡蛋", "猪肉", "白菜", "土豆")  // 默认关键词，接口拉取后替换
+    private var skuConfigMap = emptyMap<String, SkuConfig>()  // skuName -> SkuConfig 映射，用于查找 skuId/unit
     private var autoCollecting = false
     private var currentKeywordIndex = 0
     private var currentApp = ""
@@ -51,6 +52,34 @@ class CollectorAccessibilityService : AccessibilityService() {
     private var searchBtnBounds: Rect? = null
     private val allResults = mutableListOf<Pair<String, SkuItem>>()
     private val handler = Handler(Looper.getMainLooper())
+
+    // unit 编码转中文显示
+    private fun unitToDisplay(unit: String): String = when (unit) {
+        "jin" -> "斤"
+        "kg" -> "公斤"
+        "box_small" -> "小盒"
+        "box" -> "盒"
+        "bag" -> "袋"
+        "piece" -> "个"
+        "pack" -> "包"
+        else -> unit
+    }
+
+    // App -> sourceCode 映射
+    private fun appToSourceCode(app: String): String = when (app) {
+        "darunfa" -> "rf_mart_fresh"
+        "shixing" -> "shihang_fresh"
+        "caiyiluo" -> "caiyi_luo"
+        else -> app
+    }
+
+    // App -> sourceName 映射
+    private fun appToSourceName(app: String): String = when (app) {
+        "darunfa" -> "大润发优鲜"
+        "shixing" -> "食行生鲜"
+        "caiyiluo" -> "蔡亿萝"
+        else -> app
+    }
 
     private val collectReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -155,33 +184,6 @@ class CollectorAccessibilityService : AccessibilityService() {
             true
         }
 
-        // 3个App自动采集按钮（横向排列）
-        val appButtonRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 4, 0, 4)
-        }
-        val btnShixing = Button(ctx).apply {
-            text = "食行生鲜"
-            textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { startAutoCollect("shixing") }
-        }
-        val btnDarunfa = Button(ctx).apply {
-            text = "大润发"
-            textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { startAutoCollect("darunfa") }
-        }
-        val btnCaiyiluo = Button(ctx).apply {
-            text = "菜亿萝"
-            textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { startAutoCollect("caiyiluo") }
-        }
-        appButtonRow.addView(btnShixing)
-        appButtonRow.addView(btnDarunfa)
-        appButtonRow.addView(btnCaiyiluo)
-
         val btnCollect = Button(ctx).apply {
             text = "采集当前页面"
             textSize = 12f
@@ -190,20 +192,19 @@ class CollectorAccessibilityService : AccessibilityService() {
 
         val scrollView = ScrollView(ctx)
         resultText = TextView(ctx).apply {
-            text = "点击App按钮自动采集10个商品\n或点「采集当前页面」手动采集"
+            text = "点「采集当前页面」手动采集\n或在主页选择App自动采集"
             textSize = 12f
             setPadding(4, 8, 4, 8)
             setTextIsSelectable(true)
         }
         scrollView.addView(resultText)
         scrollView.layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, (density * 100).toInt()
+            LinearLayout.LayoutParams.MATCH_PARENT, (density * 160).toInt()
         )
 
         contentLayout = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
         }
-        (contentLayout as LinearLayout).addView(appButtonRow)
         (contentLayout as LinearLayout).addView(btnCollect)
         (contentLayout as LinearLayout).addView(scrollView)
 
@@ -305,6 +306,29 @@ class CollectorAccessibilityService : AccessibilityService() {
         allResults.clear()
         autoCollecting = true
 
+        // 先在子线程拉取服务端 SKU 配置，替换硬编码关键词
+        updateResult("正在获取采集配置...")
+        Thread {
+            val skuConfigs = ApiClient.fetchSkuConfig()
+            handler.post {
+                if (skuConfigs != null && skuConfigs.isNotEmpty()) {
+                    keywords = skuConfigs.map { it.skuName }
+                    skuConfigMap = skuConfigs.associateBy { it.skuName }
+                    Log.i(TAG, "已从服务端获取 ${keywords.size} 个SKU配置: $keywords")
+                    for ((name, cfg) in skuConfigMap) {
+                        Log.i(TAG, "  $name -> skuId=${cfg.skuId}, unit=${cfg.unit}")
+                    }
+                } else {
+                    Log.w(TAG, "接口拉取失败，使用默认关键词: $keywords")
+                }
+                // 配置加载完成，继续执行采集流程
+                doStartAutoCollect(app)
+            }
+        }.start()
+    }
+
+    /** 实际执行采集（关键词已就绪） */
+    private fun doStartAutoCollect(app: String) {
         val packageName = when (app) {
             "darunfa" -> "com.rt.market.fresh"
             "caiyiluo" -> "com.caiyiluo.nip"
@@ -390,19 +414,25 @@ class CollectorAccessibilityService : AccessibilityService() {
         if (skipNode != null) {
             splashRetryCount++
             if (splashRetryCount <= 3) {
-                // 用TAP_REQUEST让主机脚本执行adb tap（dispatchGesture在菜亿萝WebView上不生效）
                 val rect = Rect()
                 skipNode.getBoundsInScreen(rect)
-                val cx = rect.centerX()
-                val cy = rect.centerY()
-                Log.i(TAG, "检测到开屏广告(TAP_REQUEST $splashRetryCount/3)，跳过位置: $rect")
-                Log.i(TAG, "TAP_REQUEST:$cx:$cy")
-                // dispatchGesture作为备份
+                Log.i(TAG, "检测到开屏广告($splashRetryCount/3)，跳过位置: $rect")
+                // 先尝试ACTION_CLICK（包括父节点链）
+                var clicked = skipNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                if (!clicked) {
+                    var p = skipNode.parent
+                    while (p != null && !clicked) {
+                        clicked = p.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        p = p.parent
+                    }
+                }
+                // dispatchGesture兜底（duration需较长，WebView需要更长触摸时间）
                 val path = Path()
-                path.moveTo(cx.toFloat(), cy.toFloat())
-                val stroke = GestureDescription.StrokeDescription(path, 0, 100)
+                path.moveTo(rect.centerX().toFloat(), rect.centerY().toFloat())
+                val stroke = GestureDescription.StrokeDescription(path, 0, 300)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
                 dispatchGesture(gesture, null, null)
+                Log.i(TAG, "开屏广告点击: ACTION_CLICK=$clicked, dispatchGesture已执行")
             } else {
                 Log.i(TAG, "开屏广告未消失，等待自动关闭 (count=$splashRetryCount)")
             }
@@ -726,36 +756,219 @@ class CollectorAccessibilityService : AccessibilityService() {
         handler.postDelayed({ autoCollectStepCollect(keyword) }, 4000)
     }
 
-    // 菜亿萝专用: 输入关键词后通过TAP_REQUEST日志让主机脚本执行adb tap（dispatchGesture在WebView上不生效）
+    // 菜亿萝专用: 输入关键词后用多种方式触发搜索（不依赖tap_helper）
     private fun autoCollectStepInputCaiyiluoWithTapRequest(keyword: String, editText: AccessibilityNodeInfo, searchBtnRect: Rect) {
         if (!autoCollecting) return
         Log.i(TAG, "菜亿萝: 输入关键词: $keyword")
-        // 先聚焦EditText
+        // 步骤1: 点击EditText激活输入框，弹出输入法
+        editText.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        // 设置文本
-        val args = Bundle()
-        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, keyword)
-        val setResult = editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-        Log.i(TAG, "菜亿萝: ACTION_SET_TEXT结果: $setResult")
-        // 等待文本设置完成后，通过TAP_REQUEST让主机脚本执行adb tap
+        // 等待输入法弹出
         handler.postDelayed({
             if (!autoCollecting) return@postDelayed
-            val cx = searchBtnRect.centerX()
-            val cy = searchBtnRect.centerY()
-            Log.i(TAG, "TAP_REQUEST:$cx:$cy")
-            Log.i(TAG, "菜亿萝: 已发送TAP_REQUEST ($cx, $cy)，等待主机脚本执行点击")
-            // 也尝试dispatchGesture作为备份（可能不生效但无副作用）
-            val path = Path()
-            path.moveTo(cx.toFloat(), cy.toFloat())
-            val stroke = GestureDescription.StrokeDescription(path, 0, 150)
-            val gesture = GestureDescription.Builder().addStroke(stroke).build()
-            dispatchGesture(gesture, null, null)
-            // 也尝试ACTION_IME_ENTER
-            val ACTION_IME_ENTER = 0x400000
-            editText.performAction(ACTION_IME_ENTER)
-            // 等待搜索结果加载
-            handler.postDelayed({ autoCollectStepCollect(keyword) }, 4500)
-        }, 1500)
+            // 步骤2: 重新获取所有EditText，选择当前有焦点的那个
+            val root = rootInActiveWindow
+            if (root == null) {
+                Log.w(TAG, "菜亿萝: root为空，重试")
+                handler.postDelayed({ autoCollectStepSearch() }, 2000)
+                return@postDelayed
+            }
+            val allEditTexts = mutableListOf<AccessibilityNodeInfo>()
+            findAllEditTexts(root, allEditTexts)
+            Log.i(TAG, "菜亿萝: 找到${allEditTexts.size}个EditText")
+            for ((i, et) in allEditTexts.withIndex()) {
+                val r = Rect()
+                et.getBoundsInScreen(r)
+                Log.i(TAG, "菜亿萝: EditText[$i] text='${et.text}' focused=${et.isFocused} bounds=$r")
+            }
+            // 优先选择有焦点的EditText，否则选择最后一个（通常是当前页面的）
+            val freshEditText = allEditTexts.firstOrNull { it.isFocused }
+                ?: allEditTexts.lastOrNull()
+            if (freshEditText == null) {
+                Log.w(TAG, "菜亿萝: 设置文本前EditText丢失，重试")
+                handler.postDelayed({ autoCollectStepSearch() }, 2000)
+                return@postDelayed
+            }
+            // 步骤3: 用剪贴板粘贴方式输入文本（SET_TEXT在WebView上不生效）
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("keyword", keyword))
+            // 先清除旧文本
+            val clearArgs = Bundle()
+            clearArgs.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+            freshEditText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
+            handler.postDelayed({
+                if (!autoCollecting) return@postDelayed
+                // 粘贴新文本
+                val pasteResult = freshEditText.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                val textAfter = freshEditText.text?.toString() ?: ""
+                Log.i(TAG, "菜亿萝: PASTE=$pasteResult 文本='$textAfter' 期望='$keyword'")
+                // 如果粘贴不生效，尝试SET_TEXT
+                if (textAfter != keyword) {
+                    Log.i(TAG, "菜亿萝: PASTE未生效，尝试SET_TEXT")
+                    val args = Bundle()
+                    args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, keyword)
+                    freshEditText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                    val textAfter2 = freshEditText.text?.toString() ?: ""
+                    Log.i(TAG, "菜亿萝: SET_TEXT后 文本='$textAfter2'")
+                }
+                // 步骤4: 等待文本设置完成后，点击搜索
+                handler.postDelayed({
+                    if (!autoCollecting) return@postDelayed
+                    triggerCaiyiluoSearch(keyword, searchBtnRect)
+                }, 1500)
+            }, 300)
+        }, 2000)
+    }
+
+    // 菜亿萝搜索触发：点击输入法回车键触发搜索
+    private fun triggerCaiyiluoSearch(keyword: String, searchBtnRect: Rect) {
+        Log.i(TAG, "菜亿萝: 触发搜索 keyword=$keyword")
+
+        // 确保EditText有焦点（输入法回车键需要焦点才能触发搜索）
+        val root = rootInActiveWindow
+        if (root != null) {
+            val editText = findEditText(root)
+            editText?.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        }
+
+        // 点击输入法回车键
+        val windows = windows
+        var imeFound = false
+        for (window in windows) {
+            if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                imeFound = true
+                val rect = Rect()
+                window.getBoundsInScreen(rect)
+                Log.i(TAG, "菜亿萝: 输入法窗口 bounds=$rect")
+
+                // 尝试在输入法窗口中找到回车键节点
+                val imeRoot = window.root
+                var enterRect: Rect? = null
+                if (imeRoot != null) {
+                    enterRect = findImeEnterKey(imeRoot)
+                }
+
+                if (enterRect != null) {
+                    Log.i(TAG, "菜亿萝: 找到回车键节点 bounds=$enterRect 点击它")
+                    dispatchTap(enterRect.centerX().toFloat(), enterRect.centerY().toFloat(), 50)
+                } else {
+                    // 估算回车键位置（右下角，避开左下角剪贴板按钮）
+                    Log.i(TAG, "菜亿萝: 未找到回车键节点，多次点击估算位置")
+                    val enterX = rect.right - 60
+                    val enterY1 = rect.bottom - 120
+                    val enterY2 = rect.bottom - 80
+                    val enterY3 = rect.bottom - 160
+                    Log.i(TAG, "菜亿萝: 点击回车键估算位置: ($enterX, $enterY1) ($enterX, $enterY2) ($enterX, $enterY3)")
+                    dispatchTap(enterX.toFloat(), enterY1.toFloat(), 50)
+                    handler.postDelayed({ dispatchTap(enterX.toFloat(), enterY2.toFloat(), 50) }, 200)
+                    handler.postDelayed({ dispatchTap(enterX.toFloat(), enterY3.toFloat(), 50) }, 400)
+                }
+                break
+            }
+        }
+        if (!imeFound) {
+            Log.w(TAG, "菜亿萝: 输入法未弹出！尝试重新点击EditText")
+            if (root != null) {
+                val editText = findEditText(root)
+                editText?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                handler.postDelayed({
+                    if (!autoCollecting) return@postDelayed
+                    triggerCaiyiluoSearch(keyword, searchBtnRect)
+                }, 2000)
+                return
+            }
+        }
+
+        // 等待搜索结果加载，然后验证
+        handler.postDelayed({ autoCollectStepCollectWithVerify(keyword, searchBtnRect) }, 6000)
+    }
+
+    // 在输入法窗口节点树中搜索回车键/搜索键
+    private fun findImeEnterKey(node: AccessibilityNodeInfo): Rect? {
+        val text = node.text?.toString()?.lowercase() ?: ""
+        val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+        val keywords = listOf("搜索", "回车", "确认", "enter", "search", "send", "go", "完成", "前往")
+        for (kw in keywords) {
+            if (text.contains(kw) || desc.contains(kw)) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                Log.i(TAG, "菜亿萝: 输入法按键匹配 '$kw' text='$text' desc='$desc' bounds=$rect")
+                return rect
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val result = findImeEnterKey(child)
+            if (result != null) return result
+        }
+        return null
+    }
+
+    // 采集并验证搜索结果（菜亿萝专用）
+    private fun autoCollectStepCollectWithVerify(keyword: String, searchBtnRect: Rect) {
+        if (!autoCollecting) return
+        val root = rootInActiveWindow
+        if (root == null) {
+            handler.postDelayed({ autoCollectStepBack(keyword, emptyList()) }, 1000)
+            return
+        }
+        val items = collectPrices(root)
+        Log.i(TAG, "菜亿萝: 关键词 '$keyword' 采集到 ${items.size} 条，验证搜索结果...")
+
+        // 验证：检查采集到的商品名是否包含关键词（至少1条匹配）
+        val hasMatch = items.any { it.name.contains(keyword) }
+        if (!hasMatch && items.isNotEmpty()) {
+            // 搜索可能没触发，重试点击搜索按钮
+            searchRetryCount++
+            if (searchRetryCount <= 3) {
+                Log.w(TAG, "菜亿萝: 搜索结果不匹配(期望含'$keyword')，重试搜索 $searchRetryCount/3")
+                handler.postDelayed({
+                    if (!autoCollecting) return@postDelayed
+                    triggerCaiyiluoSearch(keyword, searchBtnRect)
+                }, 500)
+                return
+            }
+            Log.w(TAG, "菜亿萝: 搜索结果不匹配，重试已达上限，跳过")
+        }
+        searchRetryCount = 0
+        // 搜索结果正确，只取前3条（附加 skuId 和 unit）
+        val limitedItems = items.take(3)
+        for (item in limitedItems) {
+            val enriched = enrichWithSkuConfig(keyword, item)
+            Log.i(TAG, "  ${item.name} = ${item.price} (skuId=${enriched.skuId}, unit=${enriched.unit})")
+            allResults.add(keyword to enriched)
+        }
+        autoCollectStepBack(keyword, limitedItems)
+    }
+
+    // dispatchGesture点击（带回调日志）
+    private fun dispatchTap(x: Float, y: Float, durationMs: Long) {
+        val path = Path()
+        path.moveTo(x, y)
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val result = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(gesture: GestureDescription?) {
+                Log.i(TAG, "dispatchGesture onCompleted ($x, $y)")
+            }
+            override fun onCancelled(gesture: GestureDescription?) {
+                Log.w(TAG, "dispatchGesture onCancelled ($x, $y)")
+            }
+        }, null)
+        Log.i(TAG, "dispatchGesture dispatchResult=$result")
+    }
+
+    // 通过shell执行input tap（不依赖tap_helper和root）
+    private fun shellTap(x: Int, y: Int): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "input tap $x $y"))
+            val exitCode = process.waitFor()
+            Log.i(TAG, "shellTap($x, $y) exitCode=$exitCode")
+            exitCode == 0
+        } catch (e: Exception) {
+            Log.w(TAG, "shellTap异常: ${e.message}")
+            false
+        }
     }
 
     // 菜亿萝专用: 输入关键词后用ACTION_IME_ENTER触发搜索（避免点击WebView中的"搜索"文本）
@@ -807,42 +1020,16 @@ class CollectorAccessibilityService : AccessibilityService() {
             return
         }
         Log.i(TAG, "开始采集搜索结果, 根包名: ${root.packageName}")
-        val items = collectPrices(root)
-        Log.i(TAG, "关键词 '$keyword' 首屏采集到 ${items.size} 条")
+        val items = collectPrices(root).take(3)
+        Log.i(TAG, "关键词 '$keyword' 首屏采集到 ${items.size} 条（最多取3条）")
         for (item in items) {
-            Log.i(TAG, "  ${item.name} = ${item.price}")
-            allResults.add(keyword to item)
+            val enriched = enrichWithSkuConfig(keyword, item)
+            Log.i(TAG, "  ${item.name} = ${item.price} (skuId=${enriched.skuId}, unit=${enriched.unit})")
+            allResults.add(keyword to enriched)
         }
 
-        // 菜亿萝滚动后会加载推荐商品混入结果，首屏已足够，跳过滚动
-        if (currentApp == "caiyiluo") {
-            autoCollectStepBack(keyword, items)
-            return
-        }
-
-        // 滚动后采集更多
-        handler.postDelayed({ autoCollectStepScrollAndCollect(keyword, items) }, 1500)
-    }
-
-    private fun autoCollectStepScrollAndCollect(keyword: String, firstBatch: List<SkuItem>) {
-        if (!autoCollecting) return
-        Log.i(TAG, "滚动页面采集更多...")
-        scrollDown()
-
-        handler.postDelayed({
-            val root = rootInActiveWindow
-            if (root != null) {
-                val moreItems = collectPrices(root)
-                val existingNames = firstBatch.map { it.name }.toSet()
-                val newItems = moreItems.filter { it.name !in existingNames }
-                Log.i(TAG, "关键词 '$keyword' 滚动后新增 ${newItems.size} 条")
-                for (item in newItems) {
-                    Log.i(TAG, "  ${item.name} = ${item.price}")
-                    allResults.add(keyword to item)
-                }
-            }
-            autoCollectStepBack(keyword, firstBatch)
-        }, 2500)
+        // 统一逻辑：只取前3条，不滚动，直接进行下一个关键词
+        autoCollectStepBack(keyword, items)
     }
 
     private fun autoCollectStepBack(keyword: String, items: List<SkuItem>) {
@@ -851,12 +1038,14 @@ class CollectorAccessibilityService : AccessibilityService() {
             Log.w(TAG, "关键词 '$keyword' 未采集到数据")
         }
         updateResult("自动采集: $currentAppName\n完成: $keyword (${currentKeywordIndex + 1}/${keywords.size})\n已采集: ${allResults.size}条")
-        // 返回上一页
-        performGlobalAction(GLOBAL_ACTION_BACK)
+        // 菜亿萝搜索结果就在当前分类页，不需要回退；其他app回退到搜索页
+        if (currentApp != "caiyiluo") {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+        }
         currentKeywordIndex++
         searchRetryCount = 0
-        // 等待返回后搜索下一个
-        handler.postDelayed({ autoCollectStepSearch() }, 2500)
+        // 等待后搜索下一个
+        handler.postDelayed({ autoCollectStepSearch() }, 1500)
     }
 
     private fun autoCollectFinish() {
@@ -864,7 +1053,7 @@ class CollectorAccessibilityService : AccessibilityService() {
         Log.i(TAG, "=== 自动采集完成: $currentAppName ===")
         Log.i(TAG, "总共采集到 ${allResults.size} 条数据")
         for ((kw, item) in allResults) {
-            Log.i(TAG, "  [$kw] ${item.name} = ${item.price}")
+            Log.i(TAG, "  [$kw] skuId=${item.skuId} ${item.name} = ${item.price}/${item.unit}")
         }
         // 保存到文件
         saveResultsToFile()
@@ -877,9 +1066,44 @@ class CollectorAccessibilityService : AccessibilityService() {
         sb.append("采集完成: $currentAppName\n")
         sb.append("总共 ${allResults.size} 条\n---\n")
         for ((kw, item) in allResults) {
-            sb.append("[$kw] ${item.name}\n  ${item.price}\n\n")
+            sb.append("[$kw] ${item.name}\n  ${item.price}/${unitToDisplay(item.unit)} (skuId=${item.skuId})\n\n")
         }
+        sb.append("\n正在上报数据...")
         updateResult(sb.toString())
+
+        // 子线程上报数据
+        val collectedTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+        val sourceCode = appToSourceCode(currentApp)
+        val sourceName = appToSourceName(currentApp)
+        val batchId = "BATCH_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())}"
+
+        Thread {
+            val uploadItems = allResults.map { (kw, item) ->
+                val priceNum = item.price.replace(Regex("[^\\d.]"), "").toDoubleOrNull() ?: 0.0
+                UploadItem(
+                    skuId = item.skuId,
+                    sourceSkuName = item.name,
+                    sourceId = sourceCode,
+                    priceValue = priceNum,
+                    priceUnit = "元/${unitToDisplay(item.unit)}",
+                    priceDate = collectedTime,
+                    remark = ""
+                )
+            }
+            val result = ApiClient.uploadCollectedData(batchId, sourceCode, sourceName, collectedTime, uploadItems)
+            handler.post {
+                val uploadMsg = if (result.success) {
+                    "上报成功: accepted=${result.accepted}, rejected=${result.rejected}"
+                } else {
+                    "上报失败: ${result.message}"
+                }
+                Log.i(TAG, uploadMsg)
+                // 在悬浮窗结果末尾追加上报状态
+                val currentText = resultText?.text?.toString() ?: ""
+                val updatedText = currentText.replace("正在上报数据...", uploadMsg)
+                updateResult(updatedText)
+            }
+        }.start()
     }
 
     private fun saveResultsToFile() {
@@ -899,9 +1123,11 @@ class CollectorAccessibilityService : AccessibilityService() {
             writer.write("========================================\n\n")
             val byKeyword = allResults.groupBy { it.first }
             for ((kw, items) in byKeyword) {
-                writer.write("【$kw】${items.size}条\n")
+                val skuId = items.firstOrNull()?.second?.skuId ?: ""
+                val unit = items.firstOrNull()?.second?.unit ?: ""
+                writer.write("【$kw】skuId=$skuId, unit=$unit, ${items.size}条\n")
                 for ((_, item) in items) {
-                    writer.write("  ${item.name} | ${item.price}\n")
+                    writer.write("  ${item.name} | ${item.price}/${unitToDisplay(item.unit)} | skuId=${item.skuId}\n")
                 }
                 writer.write("\n")
             }
@@ -999,22 +1225,15 @@ class CollectorAccessibilityService : AccessibilityService() {
         return ""
     }
 
-    private fun scrollDown() {
-        // 菜亿萝WebView需要通过SWIPE_REQUEST让主机脚本执行adb swipe
-        if (currentApp == "caiyiluo") {
-            Log.i(TAG, "SWIPE_REQUEST:540:1800:540:400:500")
-        }
-        val path = Path()
-        path.moveTo(540f, 1800f)
-        path.lineTo(540f, 400f)
-        val stroke = GestureDescription.StrokeDescription(path, 0, 500)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        dispatchGesture(gesture, null, null)
-    }
-
     // ===== 价格提取 =====
 
-    data class SkuItem(val name: String, val price: String)
+    data class SkuItem(val name: String, val price: String, val skuId: String = "", val unit: String = "")
+
+    /** 为采集到的商品附加 skuId 和 unit 信息 */
+    private fun enrichWithSkuConfig(keyword: String, item: SkuItem): SkuItem {
+        val config = skuConfigMap[keyword] ?: return item
+        return item.copy(skuId = config.skuId, unit = config.unit)
+    }
 
     private fun collectPrices(root: AccessibilityNodeInfo): List<SkuItem> {
         val results = mutableListOf<SkuItem>()
